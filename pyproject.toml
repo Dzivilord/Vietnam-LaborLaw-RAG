@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labor-law-rag"
+version = "0.1.0"
+description = "RAG system for Vietnamese labor law"
+requires-python = ">=3.10"
+dependencies = [
+    "pypdf>=5.0.0",
+    "numpy>=1.26.0",
+    "sentence-transformers>=3.0.0",
+    "qdrant-client>=1.12.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0",
+    "pyvi>=0.1.1",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

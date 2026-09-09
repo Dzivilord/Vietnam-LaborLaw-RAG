@@ -1,0 +1,14 @@
+retrieval:
+  type: hybrid
+  data_path: data/processed/chunks/labor_law_legal.jsonl
+  collection: labor_law_dek21_768
+
+embedding:
+  model: huyydangg/DEk21_hcmute_embedding_v2
+
+reranker:
+  model: BAAI/bge-reranker-v2-m3
+
+generation:
+  provider: ollama
+  model: qwen3.5:4b
