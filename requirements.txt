@@ -1,6 +1,7 @@
 pypdf>=5.0.0
 numpy>=1.26.0
 sentence-transformers>=3.0.0
+transformers>=4.45.0
 qdrant-client>=1.12.0
 fastapi
 uvicorn
@@ -8,3 +9,7 @@ pydantic
 PyYAML
 pyvi
 python-dotenv
+firebase-admin>=6.5.0
+logfire[fastapi]>=4.0.0
+deepeval>=2.0.0
+pytest>=8.0.0

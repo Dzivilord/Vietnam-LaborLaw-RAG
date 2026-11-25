@@ -312,6 +312,106 @@ pre {
     14px Arial,
     sans-serif;
 }
+.suggestions {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 26px;
+  color: var(--muted);
+  font: 700 11px Arial, sans-serif;
+  letter-spacing: .1em;
+}
+.suggestions button {
+  width: 100%;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #faf8f2;
+  text-align: left;
+  font: 14px Arial, sans-serif;
+}
+.suggestions button:hover { color: var(--accent-dark); background: #fff1e8; }
+.evidence-toggle {
+  position: fixed;
+  z-index: 10;
+  top: 22px;
+  right: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 14px;
+  color: var(--accent-dark);
+  background: var(--panel);
+  font: 700 12px Arial, sans-serif;
+}
+.evidence-toggle:hover { background: #fff1e8; }
+.evidence-panel {
+  position: fixed;
+  z-index: 9;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(520px, 92vw);
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 48px rgba(36, 50, 42, .12);
+  transform: translateX(105%);
+  transition: transform 220ms ease;
+}
+.evidence-panel.is-open { transform: translateX(0); }
+.has-conversation .chat-panel { max-width: 900px; margin: auto; }
+.has-conversation .chat-panel > .muted { margin-bottom: 20px; }
+.has-conversation .evidence-toggle { right: 20px; }
+.is-welcome .chat-panel { min-height: calc(100vh - 112px); display: flex; flex-direction: column; justify-content: center; }
+.is-welcome .chat-panel .panel-heading { justify-content: center; text-align: center; }
+.is-welcome .chat-panel .panel-heading > div { display: grid; justify-items: center; }
+.is-welcome .chat-panel h1 { max-width: 720px; }
+.is-welcome .chat-panel > .muted { align-self: center; text-align: center; }
+.is-welcome .chat-form { width: min(820px, 100%); align-self: center; margin-top: 18px; }
+.has-conversation .chat-panel { min-height: calc(100vh - 112px); padding-top: 70px; padding-bottom: 110px; }
+.has-conversation .chat-panel .panel-heading { max-width: 760px; margin: 0 auto 26px; }
+.has-conversation .chat-panel .panel-heading h1 { font-size: 18px; line-height: 1.2; }
+.has-conversation .chat-panel .panel-heading .eyebrow { margin-bottom: 4px; }
+.has-conversation .chat-form { position: fixed; z-index: 8; right: clamp(18px, 8vw, 130px); bottom: 22px; left: clamp(18px, 8vw, 130px); margin: 0 auto; max-width: 900px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 12px 30px rgba(36, 50, 42, .14); }
+.has-conversation .chat-form label { display: none; }
+.has-conversation .chat-form textarea { min-height: 42px; border: 0; background: transparent; }
+.has-conversation .chat-form button { position: absolute; right: 12px; bottom: 12px; }
+.has-conversation .conversation-stream { max-width: 760px; margin: 0 auto; }
+.has-conversation .answer-block { max-width: 760px; margin: 20px auto 0; border-top: 0; }
+.has-conversation .answer-block::before { content: "Trợ lý pháp luật"; }
+.workspace-grid { width: 100%; max-width: 1180px; grid-template-columns: minmax(0, 1fr); }
+.chat-panel { width: 100%; max-width: 1100px; margin-inline: auto; }
+.has-conversation .chat-panel { position: relative; max-width: 1100px; min-height: calc(100vh - 112px); padding-inline: clamp(24px, 5vw, 72px); }
+.has-conversation .chat-form { position: absolute; right: clamp(24px, 5vw, 72px); bottom: 24px; left: clamp(24px, 5vw, 72px); width: auto; max-width: none; display: block; padding: 6px 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 8px 22px rgba(36, 50, 42, .1); }
+.has-conversation .chat-form textarea { display: block; height: 48px; min-height: 48px; max-height: 120px; margin: 0; padding: 8px 58px 8px 10px; resize: none; overflow-y: auto; }
+.has-conversation .chat-form button { right: 8px; bottom: 8px; }
+.conversation-stream, .has-conversation .answer-block { width: min(100%, 900px); }
+.has-conversation .conversation-stream { margin-inline: auto; }
+.has-conversation .answer-block { margin-inline: auto; }
+.workspace-grid { max-width: none; width: 100%; grid-template-columns: minmax(0, 1fr); }
+.evidence-panel { display: none; position: static; width: auto; max-width: none; transform: none; box-shadow: none; border-left: 1px solid var(--line); }
+.evidence-is-open .workspace-grid { grid-template-columns: minmax(0, 7fr) minmax(280px, 3fr); align-items: stretch; }
+.evidence-is-open .chat-panel { max-width: none; width: auto; }
+.evidence-is-open .evidence-panel.is-open { display: block; }
+.evidence-is-open .has-conversation .chat-form { right: clamp(18px, 3vw, 42px); left: clamp(18px, 3vw, 42px); }
+@media (max-width: 900px) {
+  .evidence-is-open .workspace-grid { grid-template-columns: 1fr; }
+  .evidence-is-open .evidence-panel.is-open { position: fixed; inset: 0; z-index: 20; overflow-y: auto; border-left: 0; }
+}
+.conversation-stream { margin-top: 30px; }
+.user-message { display: flex; justify-content: flex-end; margin: 0 0 28px; }
+.user-message span { max-width: min(78%, 620px); border-radius: 18px 18px 4px 18px; padding: 14px 18px; color: #fffaf4; background: var(--accent-dark); font: 16px/1.5 Arial, sans-serif; box-shadow: 0 8px 18px rgba(166, 63, 42, .16); }
+.assistant-progress { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--muted); font: 14px/1.5 Arial, sans-serif; }
+.progress-mark { color: var(--accent); font-size: 20px; }
+.typing-dots { display: inline-flex; gap: 4px; margin-left: 4px; }
+.typing-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: typing 1.1s infinite ease-in-out; }
+.typing-dots i:nth-child(2) { animation-delay: .15s; }
+.typing-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes typing { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+.answer-block { position: relative; }
+.answer-block::before { content: "Trợ lý pháp luật"; display: block; margin-bottom: 12px; color: var(--accent-dark); font: 700 13px Arial, sans-serif; }
+@media (max-width: 760px) {
+  .evidence-toggle { top: 14px; right: 16px; }
+  .evidence-panel { width: 100%; }
+  .user-message span { max-width: 90%; }
+}
 @media (max-width: 760px) {
   .app-shell {
     padding: 28px 16px;
@@ -323,3 +423,29 @@ pre {
     margin-top: 36px;
   }
 }
+
+/* Admin console: intentionally isolated from the public legal-assistant UI. */
+.admin-shell { min-height: 100vh; padding: 42px clamp(20px, 5vw, 76px) 72px; color: #edf5f7; background: #101a22; font-family: Arial, sans-serif; }
+.admin-header, .admin-query-card, .admin-kpis, .admin-grid, .admin-history { max-width: 1440px; margin-right: auto; margin-left: auto; }
+.admin-header { display: flex; align-items: start; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.admin-header h1, .admin-shell h2 { color: #f6fbfc; font-family: Georgia, serif; }
+.admin-header h1 { margin: 4px 0 10px; font-size: clamp(32px, 4.5vw, 58px); }
+.admin-header p { max-width: 560px; margin: 0; color: #9eb2ba; line-height: 1.6; }
+.admin-kicker { margin: 0; color: #73d6c1; font: 700 11px/1.4 Arial, sans-serif; letter-spacing: .13em; text-transform: uppercase; }
+.admin-live { display: flex; align-items: center; gap: 8px; padding-top: 10px; color: #9eb2ba; font-size: 13px; white-space: nowrap; }
+.admin-live span, .stage-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #66d8b1; box-shadow: 0 0 0 4px rgba(102, 216, 177, .12); }
+.admin-query-card, .admin-card { border: 1px solid #2a3b46; border-radius: 16px; background: #17242d; box-shadow: 0 16px 45px rgba(0, 0, 0, .18); }
+.admin-query-card { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(0, 1.3fr); gap: 24px; padding: 24px; }
+.admin-query-card h2, .admin-card h2 { margin-top: 4px; font-size: 25px; }.admin-query-card form { display: grid; grid-template-columns: 1fr auto; gap: 12px; }
+.admin-query-card textarea { min-height: 90px; border-color: #38505d; border-radius: 10px; color: #eaf2f3; background: #0f1a21; font-family: Arial, sans-serif; }.admin-query-card button { align-self: end; border-radius: 9px; background: #168a7a; font-family: Arial, sans-serif; font-weight: 700; }.admin-error { grid-column: 1 / -1; margin: 0; color: #ff9f97; }
+.admin-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }.admin-kpis article { display: grid; gap: 8px; min-height: 108px; padding: 18px; border: 1px solid #2a3b46; border-radius: 12px; background: #132029; }.admin-kpis span { color: #95aab2; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }.admin-kpis strong { color: #ecf9f7; font-size: 27px; }
+.admin-config-card { max-width: 1440px; margin: 18px auto 0; }.admin-config-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 22px; }.admin-config-grid label { display: grid; gap: 7px; color: #bed0d4; font-size: 13px; }.admin-config-grid input:not([type="checkbox"]):not([type="range"]), .admin-config-grid textarea { width: 100%; border: 1px solid #38505d; border-radius: 8px; padding: 9px; color: #eaf2f3; background: #0f1a21; font: inherit; }.admin-config-grid textarea { resize: vertical; }.admin-config-grid small { color: #8198a1; line-height: 1.45; }.admin-config-grid output { color: #73d6c1; font-weight: 700; }.admin-config-grid input[type="range"] { accent-color: #42b8a4; }.admin-toggle { grid-template-columns: auto 1fr; align-items: center; min-height: 78px; padding: 14px; border: 1px solid #38505d; border-radius: 10px; background: #10202a; }.admin-toggle input { width: 17px; height: 17px; accent-color: #42b8a4; }.admin-toggle small { grid-column: 2; }
+.admin-live-timeline { max-width: 1440px; margin: 18px auto 0; }.live-event-list { display: grid; gap: 0; margin: 24px 0 0; padding: 0; list-style: none; border-left: 1px solid #36505b; }.live-event-list li { position: relative; display: grid; grid-template-columns: 14px 94px 160px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 0 10px 16px; border-bottom: 1px solid #263944; }.live-event-list .stage-dot { position: absolute; left: -4px; width: 7px; height: 7px; }.live-event-list li.is-started .stage-dot { background: #f8c75c; box-shadow: 0 0 0 5px rgba(248,199,92,.12); }.live-event-list li.is-failed .stage-dot { background: #ed6d68; }.live-event-list time, .live-event-list small { color: #8fa5ad; font-size: 12px; }.live-event-list p { margin: 0; color: #cfdee0; font-size: 13px; }.live-event-list strong { color: #e9f6f4; font-size: 13px; }.live-event-list small { text-transform: uppercase; }
+.admin-grid { display: grid; grid-template-columns: minmax(320px, .8fr) minmax(400px, 1.2fr); gap: 18px; margin-top: 18px; }.admin-card { padding: 24px; }.admin-card-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }.admin-card-heading h2 { margin-bottom: 0; }
+.admin-status { display: inline-block; border-radius: 999px; padding: 5px 9px; font: 700 11px Arial, sans-serif; letter-spacing: .05em; text-transform: uppercase; }.admin-status.is-success { color: #9cf0d9; background: #135e54; }.admin-status.is-warning { color: #ffd789; background: #6b4e1e; }.admin-status.is-danger { color: #ffb0aa; background: #713933; }.admin-empty { color: #91a7b0; line-height: 1.6; }.admin-request-meta { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 26px; color: #9eb2ba; font-size: 13px; }.admin-shell code { color: #a8e9dc; font-size: .9em; }
+.stage-list { display: grid; gap: 0; margin: 22px 0; padding: 0; list-style: none; }.stage-list li { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 12px 0; border-bottom: 1px solid #2a3b46; }.stage-list strong { color: #e8f4f3; font-size: 13px; }.stage-dot { width: 7px; height: 7px; }.admin-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; margin: 0; background: #2a3b46; }.admin-facts div { min-width: 0; padding: 12px; background: #14212a; }.admin-facts dt { color: #90a7af; font-size: 11px; text-transform: uppercase; }.admin-facts dd { overflow: hidden; margin: 5px 0 0; color: #e8f4f3; text-overflow: ellipsis; white-space: nowrap; }
+.admin-answer { max-height: 210px; overflow: auto; color: #e1ebed; line-height: 1.65; }.admin-evidence-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }.admin-evidence-list article { padding: 12px; border-left: 3px solid #42b8a4; background: #10202a; }.admin-evidence-list b { color: #73d6c1; }.admin-evidence-list span { margin-left: 9px; color: #9db2b9; font-size: 12px; }.admin-evidence-list p { margin: 8px 0 0; color: #d6e1e3; font-size: 13px; line-height: 1.55; }
+.admin-history { margin-top: 18px; }.admin-secondary-button { border: 1px solid #3c5964; border-radius: 8px; padding: 8px 11px; color: #b8cbcf; background: transparent; font-size: 12px; }.admin-secondary-button:hover { background: #243844; }.trace-table-wrap { overflow-x: auto; margin: 24px -24px -24px; }.admin-history table { width: 100%; min-width: 800px; border-collapse: collapse; font-size: 13px; }.admin-history th { padding: 13px 24px; color: #8da4ad; background: #12202a; font-size: 11px; letter-spacing: .08em; text-align: left; text-transform: uppercase; }.admin-history td { max-width: 340px; padding: 15px 24px; border-top: 1px solid #2a3b46; color: #d7e4e5; vertical-align: top; }.admin-history small { display: block; overflow: hidden; margin-top: 5px; color: #8fa5ad; font-size: 11px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 850px) { .admin-header, .admin-query-card { grid-template-columns: 1fr; }.admin-header { display: grid; }.admin-kpis, .admin-config-grid { grid-template-columns: repeat(2, 1fr); }.admin-grid { grid-template-columns: 1fr; }.admin-query-card form { grid-template-columns: 1fr; }.admin-query-card button { justify-self: start; } }
+@media (max-width: 520px) { .admin-shell { padding: 26px 14px 48px; }.admin-card, .admin-query-card { padding: 18px; }.admin-kpis { gap: 8px; }.admin-kpis article { min-height: 86px; padding: 12px; }.admin-kpis strong { font-size: 20px; } }
+@media (max-width: 720px) { .live-event-list li { grid-template-columns: 14px 1fr auto; }.live-event-list time, .live-event-list p { grid-column: 2 / -1; }.live-event-list small { grid-column: 3; grid-row: 1; } }

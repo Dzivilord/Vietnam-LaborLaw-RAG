@@ -17,7 +17,9 @@ import yaml
 RetrievalMethod = Literal["dense", "bm25", "hybrid"]
 EmbeddingModelKey = Literal["bge", "dek21"]
 RerankerType = Literal["bge", "qwen3"]
-GenerationProvider = Literal["gemini", "ollama"]
+GenerationProvider = Literal["ollama", "openrouter"]
+GuardrailClassifierProvider = Literal["rules", "jev", "openrouter_jev"]
+AmbiguityMode = Literal["clarify", "broad_context"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -34,12 +36,25 @@ class RetrievalRuntimeConfig:
     collection: str | None = None
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
+    # Embedded local Qdrant directory; when set, qdrant_url is ignored.
+    qdrant_path: Path | None = None
     device: str | None = None
     dek21_dimension: int = 768
 
     rrf_k: int = 60
     dense_weight: float = 1.0
     bm25_weight: float = 1.0
+
+
+@dataclass(slots=True, frozen=True)
+class QueryUnderstandingRuntimeConfig:
+    """Offline query rewriting and direct ``Điều N`` lookup (off by default)."""
+
+    enabled: bool = False
+    article_lookup: bool = True
+    expand_terms: bool = True
+    restore_diacritics: bool = True
+    expand_abbreviations: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -80,22 +95,57 @@ class GenerationRuntimeConfig:
     enabled: bool = False
     provider: GenerationProvider = "ollama"
     model: str | None = None
+    fallback_models: tuple[str, ...] = ()
     temperature: float = 0.2
     max_output_tokens: int = 1200
     require_citations: bool = True
 
     ollama_url: str | None = None
     ollama_think: bool = False
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_referer: str | None = None
+    openrouter_title: str = "Labor Law RAG"
     timeout: float = 180.0
+
+
+@dataclass(slots=True, frozen=True)
+class GuardrailClassifierRuntimeConfig:
+    provider: GuardrailClassifierProvider = "rules"
+    model: str | None = None
+    device: str | None = None
+    threshold: float = 0.80
+    base_url: str = "https://openrouter.ai/api/alpha/decisions"
+    timeout: float = 15.0
+    referer: str | None = None
+    title: str = "Labor Law RAG Guardrails"
+
+
+@dataclass(slots=True, frozen=True)
+class GuardrailRuntimeConfig:
+    enabled: bool = True
+    scope_enabled: bool = True
+    sensitive_enabled: bool = True
+    rules_enabled: bool = True
+    ambiguity_enabled: bool = True
+    ambiguity_mode: AmbiguityMode = "broad_context"
+    evidence_quality_enabled: bool = True
+    handoff_eligible: bool = True
+    output_enabled: bool = True
+    require_citations: bool = True
+    reject_invalid_citations: bool = True
+    classifier: GuardrailClassifierRuntimeConfig = field(default_factory=GuardrailClassifierRuntimeConfig)
 
 
 @dataclass(slots=True, frozen=True)
 class RAGRuntimeConfig:
     retrieval: RetrievalRuntimeConfig = field(default_factory=RetrievalRuntimeConfig)
+    query_understanding: QueryUnderstandingRuntimeConfig = field(default_factory=QueryUnderstandingRuntimeConfig)
     reranker: RerankerRuntimeConfig = field(default_factory=RerankerRuntimeConfig)
     context: ContextRuntimeConfig = field(default_factory=ContextRuntimeConfig)
     ambiguity: AmbiguityRuntimeConfig = field(default_factory=AmbiguityRuntimeConfig)
     generation: GenerationRuntimeConfig = field(default_factory=GenerationRuntimeConfig)
+    guardrails: GuardrailRuntimeConfig = field(default_factory=GuardrailRuntimeConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "RAGRuntimeConfig":
@@ -113,6 +163,12 @@ class RAGRuntimeConfig:
             if not data_path.is_absolute():
                 data_path = project_root / data_path
             retrieval_values["data_path"] = data_path
+        qdrant_path = retrieval_values.get("qdrant_path")
+        if qdrant_path:
+            qdrant_path = Path(qdrant_path)
+            if not qdrant_path.is_absolute():
+                qdrant_path = project_root / qdrant_path
+            retrieval_values["qdrant_path"] = qdrant_path
 
         embedding_values = values.get("embedding", {})
         embedding_model = embedding_values.get("model", "bge")
@@ -126,13 +182,23 @@ class RAGRuntimeConfig:
 
         generation_values = dict(values.get("generation", {}))
         generation_values.setdefault("enabled", True)
+        if "fallback_models" in generation_values:
+            generation_values["fallback_models"] = tuple(generation_values["fallback_models"] or ())
+
+        guardrail_values = dict(values.get("guardrails", {}))
+        guardrail_classifier_values = dict(guardrail_values.pop("classifier", {}))
 
         return cls(
             retrieval=RetrievalRuntimeConfig(
                 **retrieval_values,
             ),
+            query_understanding=QueryUnderstandingRuntimeConfig(**values.get("query_understanding", {})),
             reranker=RerankerRuntimeConfig(**reranker_values),
             context=ContextRuntimeConfig(**values.get("context", {})),
             ambiguity=AmbiguityRuntimeConfig(**values.get("ambiguity", {})),
             generation=GenerationRuntimeConfig(**generation_values),
+            guardrails=GuardrailRuntimeConfig(
+                **guardrail_values,
+                classifier=GuardrailClassifierRuntimeConfig(**guardrail_classifier_values),
+            ),
         )

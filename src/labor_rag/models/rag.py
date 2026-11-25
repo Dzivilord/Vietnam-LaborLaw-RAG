@@ -25,6 +25,8 @@ RAGStatus = Literal[
     "clarification_required",
     "insufficient_context",
     "abstained",
+    "out_of_scope",
+    "refused",
 ]
 
 

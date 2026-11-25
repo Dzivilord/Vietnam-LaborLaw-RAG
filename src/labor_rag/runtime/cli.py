@@ -91,14 +91,14 @@ def add_core_pipeline_arguments(
 
 def add_generation_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("generation")
-    group.add_argument("--provider", choices=("gemini", "ollama"), default="ollama")
+    group.add_argument("--provider", choices=("ollama", "openrouter"), default="ollama")
     group.add_argument(
         "--generation-model", "--llm-model", "--model",
         dest="generation_model",
         default=None,
         help=(
-            "Generation model override. Ollama default is OLLAMA_MODEL or "
-            "qwen3.5:4b; Gemini default is GEMINI_MODEL/provider default."
+            "Generation model override. OpenRouter default is OPENROUTER_MODEL "
+            "or the configured provider default."
         ),
     )
     group.add_argument("--temperature", type=float, default=0.2)

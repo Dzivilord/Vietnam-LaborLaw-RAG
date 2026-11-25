@@ -1,0 +1,3 @@
+# Optional: LLM-judge evaluation (evals/run_ragas.py). Not needed to run the app.
+-r requirements.txt
+ragas==0.4.4

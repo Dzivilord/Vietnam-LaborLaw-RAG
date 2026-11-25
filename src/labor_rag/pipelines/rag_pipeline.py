@@ -9,9 +9,12 @@ chunks.  This preserves the normal fast path for focused questions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from time import perf_counter
+from typing import Any, Callable, Literal
 
 from labor_rag.retrieval.base import BaseRetriever, RetrievalResult
+from labor_rag.observability.logfire_spans import set_attributes as set_span_attributes
+from labor_rag.observability.logfire_spans import span as logfire_span
 from labor_rag.reranking.base import BaseReranker
 from labor_rag.reranking.context_builder import (
     ContextBuildResult,
@@ -113,6 +116,8 @@ class RetrievalContextPipeline:
         query: str,
         *,
         check_ambiguity: bool | None = None,
+        enable_rerank: bool | None = None,
+        event_callback: Callable[[str, str, str], None] | None = None,
     ) -> RetrievalContextPipelineResult:
         """Run retrieval -> reranking -> context -> optional ambiguity check.
 
@@ -121,30 +126,49 @@ class RetrievalContextPipeline:
         * ``True``  -> activate feature for this request;
         * ``False`` -> bypass feature for this request.
         """
+        started = perf_counter()
+        timings_ms: dict[str, float] = {}
         query = self._validate_query(query)
 
-        retrieved = self.retriever.retrieve(
-            query,
-            top_k=self.config.retrieval_top_k,
-        )
-        if self.config.enable_rerank:
+        self._emit(event_callback, "retrieval", "started", "Searching dense and lexical evidence.")
+        with logfire_span("rag.retrieve", **{"rag.top_k": self.config.retrieval_top_k}) as span:
+            retrieved = self.retriever.retrieve(query, top_k=self.config.retrieval_top_k)
+            set_span_attributes(span, **{
+                "rag.retrieved_count": len(retrieved),
+                "rag.top_chunk_ids": [item.chunk_id for item in retrieved[:5]],
+            })
+        timings_ms["retrieval"] = self._elapsed_ms(started)
+        self._emit(event_callback, "retrieval", "completed", f"Retrieved {len(retrieved)} candidates.")
+        rerank_enabled = self.config.enable_rerank if enable_rerank is None else bool(enable_rerank)
+        if rerank_enabled:
+            self._emit(event_callback, "reranking", "started", "Scoring candidate relevance.")
             if self.reranker is None:
                 raise RuntimeError("Reranking is enabled but no reranker is configured.")
-            reranked = self.reranker.rerank(
-                query,
-                retrieved,
-                top_k=self.config.rerank_top_k,
-            )
-            context_result = self.context_builder.build(query, reranked)
+            with logfire_span("rag.rerank", **{"rag.candidates": len(retrieved), "rag.top_k": self.config.rerank_top_k}) as span:
+                reranked = self.reranker.rerank(query, retrieved, top_k=self.config.rerank_top_k)
+                set_span_attributes(span, **{
+                    "rag.reranker": getattr(self.reranker, "model_name", type(self.reranker).__name__),
+                    "rag.top_score": round(float(reranked[0].score), 4) if reranked else None,
+                    "rag.top_chunk_ids": [item.chunk_id for item in reranked[:5]],
+                    "rag.top_scores": [round(float(item.score), 4) for item in reranked[:5]],
+                })
+            timings_ms["reranking"] = self._elapsed_ms(started) - timings_ms["retrieval"]
+            self._emit(event_callback, "reranking", "completed", f"Reranked {len(reranked)} candidates; context building is next.")
+            self._emit(event_callback, "context", "started", "Selecting legal context and evidence.")
+            with logfire_span("rag.context", **{"rag.source": "reranker"}) as span:
+                context_result = self.context_builder.build(query, reranked)
+                _annotate_context_span(span, context_result)
+            timings_ms["context_building"] = self._elapsed_ms(started) - sum(timings_ms.values())
             context_source = "reranker"
         else:
+            self._emit(event_callback, "context", "started", "Rerank skipped; selecting context from retrieval results.")
             reranked = []
-            context_result = self.context_builder.build_from_retrieval(
-                query,
-                retrieved,
-                top_k=self.config.no_rerank_context_k,
-            )
+            with logfire_span("rag.context", **{"rag.source": "retrieval"}) as span:
+                context_result = self.context_builder.build_from_retrieval(query, retrieved, top_k=self.config.no_rerank_context_k)
+                _annotate_context_span(span, context_result)
+            timings_ms["context_building"] = self._elapsed_ms(started) - timings_ms["retrieval"]
             context_source = "retrieval_rank"
+        self._emit(event_callback, "context", "completed", f"Selected {len(context_result.selected)} evidence chunks.")
 
         if context_result.status == "insufficient_context":
             return self._result(
@@ -159,6 +183,7 @@ class RetrievalContextPipeline:
                 suggestions=[],
                 reason="no_chunk_survived_context_selection",
                 context_source=context_source,
+                timings_ms=timings_ms, rerank_enabled=rerank_enabled,
             )
 
         feature_enabled = (
@@ -191,6 +216,7 @@ class RetrievalContextPipeline:
                 suggestions=[],
                 reason=reason,
                 context_source=context_source,
+                timings_ms=timings_ms, rerank_enabled=rerank_enabled,
             )
 
         if self.ambiguity_classifier is None:
@@ -202,6 +228,7 @@ class RetrievalContextPipeline:
             query,
             selected_results,
         )
+        timings_ms["ambiguity_check"] = self._elapsed_ms(started) - sum(timings_ms.values())
 
         if decision.requires_clarification:
             # Do not pass a perfectly valid but semantically broad context into
@@ -219,6 +246,7 @@ class RetrievalContextPipeline:
                 suggestions=list(decision.suggestions),
                 reason="ambiguous_query_over_multiple_relevant_facets",
                 context_source=context_source,
+                timings_ms=timings_ms, rerank_enabled=rerank_enabled,
             )
 
         # Both SPECIFIC and COMPREHENSIVE are answerable.  In the comprehensive
@@ -235,6 +263,7 @@ class RetrievalContextPipeline:
             suggestions=[],
             reason=f"query_classified_as_{decision.label}",
             context_source=context_source,
+            timings_ms=timings_ms, rerank_enabled=rerank_enabled,
         )
 
     def _result(
@@ -251,10 +280,12 @@ class RetrievalContextPipeline:
         suggestions: list[Suggestion],
         reason: str,
         context_source: str,
+        timings_ms: dict[str, float],
+        rerank_enabled: bool,
     ) -> RetrievalContextPipelineResult:
         diagnostics: dict[str, Any] = {
             "reason": reason,
-            "rerank_enabled": self.config.enable_rerank,
+            "rerank_enabled": rerank_enabled,
             "context_source": context_source,
             "no_rerank_context_k": (
                 self.config.no_rerank_context_k
@@ -269,6 +300,10 @@ class RetrievalContextPipeline:
             ),
             "ambiguity_check_min_chunks": self.config.ambiguity_check_min_chunks,
             "ambiguity_check_triggered": ambiguity_check_triggered,
+            "timings_ms": {
+                stage: round(max(duration, 0.0), 2)
+                for stage, duration in timings_ms.items()
+            },
         }
         if ambiguity_decision is not None:
             diagnostics["ambiguity"] = {
@@ -301,3 +336,27 @@ class RetrievalContextPipeline:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must be a non-empty string.")
         return query.strip()
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> float:
+        return (perf_counter() - started) * 1000.0
+
+    @staticmethod
+    def _emit(callback: Callable[[str, str, str], None] | None, stage: str, status: str, message: str) -> None:
+        if callback is not None:
+            callback(stage, status, message)
+
+
+def _annotate_context_span(span: Any, context_result: ContextBuildResult) -> None:
+    """Attach what context selection kept and why it dropped the rest."""
+    rejected: dict[str, int] = {}
+    for item in context_result.rejected:
+        reason = str(item.get("reason", "unknown"))
+        rejected[reason] = rejected.get(reason, 0) + 1
+    set_span_attributes(span, **{
+        "rag.context_status": context_result.status,
+        "rag.selected_count": len(context_result.selected),
+        "rag.selected_chunk_ids": [item.chunk_id for item in context_result.evidence],
+        "rag.rejected_by_reason": rejected,
+        "rag.context_tokens": context_result.diagnostics.get("estimated_context_tokens"),
+    })

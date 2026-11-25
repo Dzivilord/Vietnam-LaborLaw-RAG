@@ -18,15 +18,21 @@ class QdrantStore:
         *,
         url: str = "http://localhost:6333",
         api_key: str | None = None,
+        path: str | None = None,
     ) -> None:
+        """``path`` selects Qdrant's embedded local mode (no server, e.g. on
+        Kaggle); otherwise ``url`` points at a running Qdrant server."""
         if not collection_name.strip():
             raise ValueError("collection_name must not be empty.")
 
         self.collection_name = collection_name
-        self.client = QdrantClient(
-            url=url,
-            api_key=api_key,
-        )
+        if path:
+            self.client = QdrantClient(path=str(path))
+        else:
+            self.client = QdrantClient(
+                url=url,
+                api_key=api_key,
+            )
 
     def collection_exists(self) -> bool:
         """Return True when the configured collection already exists."""

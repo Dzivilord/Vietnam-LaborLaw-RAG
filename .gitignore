@@ -26,6 +26,9 @@ data/qdrant/
 data/logs/
 data/retrieval_results/
 data/reranking_results/
+evals/reports/
+evals/runs/
+evals/cache/
 
 # Notebook caches
 .ipynb_checkpoints/

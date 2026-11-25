@@ -22,11 +22,11 @@ RAG Pipeline
 	|-- BGE reranking
 	|-- optional ambiguity check (disabled in current config)
 	|-- hierarchy-aware context builder
-	`-- generation via Ollama
+	`-- generation via local Ollama
 
 Qdrant <--- dense vectors and original chunk payloads
 Hugging Face <--- embedding and reranker model downloads
-Ollama <--- qwen3.5:4b generation model
+Ollama <--- local qwen3.5:4b generation model
 ```
 
 The backend entrypoint is `app.backend.api.main:app`. Run Python commands from
@@ -52,7 +52,7 @@ Thời gian thử việc tối đa là bao lâu?
 ```
 
 The first Python startup downloads Hugging Face models. The first Ollama
-response loads the local model into memory.
+response loads the local generation model into memory.
 
 ## Prerequisites
 
@@ -155,31 +155,23 @@ indexes automatically.
 | --------------- | ------------------------------------- | ------------------------------- |
 | Dense embedding | `huyydangg/DEk21_hcmute_embedding_v2` | Automatic Hugging Face download |
 | Reranker        | `BAAI/bge-reranker-v2-m3`             | Automatic Hugging Face download |
-| Generation      | `qwen3.5:4b`                          | Ollama pull                     |
+| Generation      | `qwen3.5:4b`                          | Local Ollama                    |
+
+Start Ollama locally and pull the default generation model:
 
 ```powershell
-ollama serve
 ollama pull qwen3.5:4b
-ollama list
 ```
-
-If Ollama is already running as a desktop/service application, do not start a
-second `ollama serve`. The provider calls
-`http://localhost:11434/api/chat`.
-
-The active configuration does not use Gemini. The optional Gemini provider
-would additionally require `google-genai`, `GEMINI_API_KEY`, and a changed
-provider setting; do not install it for the default path.
 
 ## Configuration
 
 `configs/labor_rag.yaml` currently specifies hybrid retrieval, BM25 data at
 `data/processed/chunks/labor_law_legal.jsonl`, collection
-`labor_law_dek21_768`, DEk21 768-dimensional embeddings, BGE reranking, Ollama
-generation with `qwen3.5:4b`, and ambiguity checking disabled.
+`labor_law_dek21_768`, DEk21 768-dimensional embeddings, BGE reranking,
+local Ollama generation with `qwen3.5:4b`, and ambiguity checking disabled.
 
 Qdrant is currently configured as the code default `http://localhost:6333`, not
-as an environment variable. Ollama supports these optional process variables:
+as an environment variable. Ollama supports these process variables:
 
 ```text
 OLLAMA_BASE_URL=http://localhost:11434
@@ -192,11 +184,14 @@ Create local configuration without committing secrets:
 Copy-Item .env.example .env
 ```
 
-The backend does not implicitly load `.env`. `scripts/dev.ps1` passes
-`--env-file .env` when that file exists; for manual startup use the same option
-or set variables in the PowerShell session. The current YAML explicitly sets
-the generation model to `qwen3.5:4b`, so `OLLAMA_MODEL` is only relevant after
-changing that config or using the provider outside the current YAML path.
+The backend loads the repository-root `.env` automatically at startup
+(`load_dotenv(..., override=False)` in `app/backend/api/main.py`), so no extra
+flag is needed. Variables already set in the process environment (for example
+in the PowerShell session) take precedence over values in `.env`. `scripts/dev.ps1`
+additionally passes `--env-file .env` to Uvicorn when that file exists; this is
+redundant but harmless. The current YAML explicitly sets
+the generation model, so `OPENROUTER_MODEL` is only relevant after changing
+that config or using the provider outside the current YAML path.
 
 ## Start the Product
 
@@ -214,8 +209,8 @@ conda activate labor
 python -m uvicorn app.backend.api.main:app --reload
 ```
 
-If you created `.env` and want Uvicorn to load it, append
-`--env-file .env`.
+If `.env` exists at the repository root, the backend loads it automatically;
+`--env-file .env` is not required.
 
 ```powershell
 # Terminal 3
@@ -257,6 +252,93 @@ Open Swagger at `http://127.0.0.1:8000/docs` and frontend at
 contain `[E1]`-style citations and the Evidence panel should contain matching
 chunks.
 
+## Admin Observability Console
+
+Open `http://localhost:3000/admin` to run diagnostic queries and inspect the
+retrieval, reranking, context-building, and generation timings, output, cited
+evidence, and the most recent request traces. The API exposes the current
+process's trace buffer at `GET /admin/traces` for this console.
+
+The console can override, for one diagnostic request only, whether reranking is
+enabled, the local Ollama model, temperature, and token budget. It never
+persists these controls to YAML. Configure the default model in
+`configs/labor_rag.yaml`.
+
+The console uses Server-Sent Events (SSE) to show every pipeline transition as
+it happens: queued, retrieval, reranking, context selection, generation, and
+completion/error. This works completely locally. For an additional hosted
+trace dashboard, run `logfire projects new` or `logfire projects use` locally
+after installing dependencies; Logfire then uses its local project credential.
+`LOGFIRE_TOKEN` is only needed for another machine or deployment. FastAPI
+request spans are then exported to Logfire. Do not enable it for legal queries
+until Logfire data-scrubbing and retention are approved for your environment.
+
+Logfire is disabled by default. To explicitly enable it, set
+`LOGFIRE_ENABLED=true` and restart the backend.
+
+For local development, the backend keeps the latest 200 traces in memory.
+
+## Offline quality evaluation
+
+The evaluation baseline lives in [`evals/`](evals/README.md). It scores routing,
+retrieval, reranking, citation validity, abstention, latency, and errors from a
+versioned JSONL dataset without calling an external model or service:
+
+```powershell
+python -m evals.run_offline --cases evals/datasets/template_cases.jsonl
+```
+
+See [`evals/README.md`](evals/README.md) for the dataset fields and the optional
+DeepEval faithfulness/relevance judge. The LLM judge is disabled by default.
+
+## Quality guardrails
+
+The pipeline has local, configurable guardrails before retrieval, after context
+selection, and after generation. Their primary role is answer quality and
+grounding: they can return `out_of_scope`, `refused`, `clarification_required`,
+or `insufficient_context` before an unsupported answer is produced.
+
+Configure every stage in `configs/labor_rag.yaml` under `guardrails`:
+
+```yaml
+guardrails:
+  scope_enabled: true
+  sensitive_enabled: true
+  ambiguity_enabled: true
+  ambiguity_mode: broad_context # or clarify
+  evidence_quality_enabled: true
+  output_enabled: true
+  classifier:
+    provider: rules # or jev
+    threshold: 0.80
+```
+
+`rules` is the offline high-precision baseline. To use a local JEV checkpoint,
+set `provider: jev` and `classifier.model` to its local path; the checkpoint
+must emit scores for the labels `in_scope`, `out_of_scope`,
+`sensitive_or_disallowed`, `ambiguous`, or `unknown`.
+
+To use TypeSafe Jev through OpenRouter's typed Decisions API instead, set
+`OPENROUTER_API_KEY` in `.env`, then change `provider` to `openrouter_jev`.
+The default model is `typesafe/jev-1.13`; `classifier.model`, `base_url`, and
+`timeout` remain configurable under `guardrails.classifier`. No web lookup or
+human-review action is triggered automatically: insufficient evidence is only
+marked `handoff_eligible` in diagnostics for a future integration.
+To mirror trace metadata to Firestore, install the updated dependencies and
+configure a Firebase service-account credential outside the repository:
+
+```text
+FIRESTORE_TRACE_COLLECTION=rag_request_traces
+GOOGLE_APPLICATION_CREDENTIALS=/secure/path/service-account.json
+RAG_TRACE_INCLUDE_CONTENT=false
+```
+
+Firestore logging is off unless `FIRESTORE_TRACE_COLLECTION` is set. With the
+default `RAG_TRACE_INCLUDE_CONTENT=false`, only a query hash is mirrored; the
+query content remains in the local in-memory admin trace. Do not expose
+`/admin` or `/admin/traces` publicly: protect it with your identity-aware proxy
+or application authentication before production deployment.
+
 ## Required Runtime Assets
 
 ### Required and included
@@ -273,7 +355,7 @@ chunks.
 - Python packages from PyPI.
 - Node packages from npm.
 - DEk21 and BGE reranker models from Hugging Face.
-- Ollama `qwen3.5:4b`.
+- OpenRouter API access and an `OPENROUTER_API_KEY` for generation.
 
 ### Generated locally
 
@@ -288,7 +370,7 @@ chunks.
 
 - Re-running PDF parsing, cleaning, or chunking; processed chunks are included.
 - Notebook files and empty experimental directories.
-- Gemini packages/credentials when using Ollama.
+- Local Ollama/Gemini runtime packages and credentials.
 
 Raw/extracted documents are useful for corpus maintenance, but are not needed
 to start the product after the included chunks have been indexed.
@@ -335,17 +417,17 @@ Invoke-WebRequest http://localhost:6333/ -UseBasicParsing
 
 If the collection is absent, run the indexing command once.
 
-### Ollama connection error
+### OpenRouter connection error
 
 ```powershell
-ollama list
-Invoke-WebRequest http://localhost:11434/api/tags -UseBasicParsing
+if (-not $env:OPENROUTER_API_KEY) { Write-Error "OPENROUTER_API_KEY is not configured" }
 ```
 
 ### Model not found
 
-Run `ollama pull qwen3.5:4b`. Hugging Face models download automatically; check
-network access and disk space if that download fails.
+Verify the configured OpenRouter model name and API-key permissions. Hugging
+Face embedding/reranking models download automatically; check network access
+and disk space if that download fails.
 
 ### Frontend CORS error
 
@@ -375,10 +457,10 @@ Stop the existing process or deliberately change the port and CORS setting.
 ## Reproducibility Status
 
 The supported fresh-machine flow is: install dependencies, start pinned
-Qdrant, index the included chunks, pull Ollama, start backend/frontend, and
+Qdrant, index the included chunks, configure OpenRouter, start backend/frontend, and
 query through the browser. No indexing or model cache is assumed to be present.
 
-Python transitive versions, Hugging Face revisions, Ollama revisions, and
+Python transitive versions, Hugging Face revisions, and OpenRouter model
 OS/GPU-specific Torch wheels are not fully locked by this repository. The
 frontend lockfile and Qdrant image are pinned; Python requirements use minimum
 versions. A byte-for-byte production environment would additionally need a

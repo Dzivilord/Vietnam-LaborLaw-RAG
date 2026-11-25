@@ -1,3 +1,6 @@
+from time import perf_counter
+from uuid import uuid4
+
 from fastapi import APIRouter, Request
 from app.backend.api.schemas import ChatRequest, ChatResponse, EvidenceCitation
 
@@ -6,10 +9,33 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 @router.post("")
 def chat(body: ChatRequest, request: Request):
+    request_id = str(uuid4())
+    started = perf_counter()
     runtime = request.app.state.rag_runtime
-    result = runtime.chat(body.query)
+    options = body.options
+    result = runtime.chat(
+        body.query,
+        enable_rerank=options.enable_rerank if options else None,
+        generation_overrides=(
+            options.generation.model_dump(exclude_none=True, exclude_defaults=True)
+            if options
+            else {}
+        ),
+    )
+    diagnostics = result.metadata.get("diagnostics", {})
+    request.app.state.trace_recorder.record(
+        request_id=request_id,
+        query=body.query,
+        status=result.metadata.get("status", "error"),
+        total_latency_ms=(perf_counter() - started) * 1000.0,
+        diagnostics=diagnostics,
+        evidence_count=len(result.evidence),
+        citations=result.metadata.get("citations", []),
+        error=result.metadata.get("error"),
+    )
 
     return ChatResponse(
+        request_id=request_id,
         answer=result.answer,
         citations=result.metadata.get("citations", []),
         evidence=[

@@ -1,6 +1,6 @@
-"""LLM provider adapters."""
+"""Generation provider adapters."""
 
-from .gemini import GeminiProvider
 from .ollama import OllamaProvider
+from .openrouter import OpenRouterProvider
 
-__all__ = ["GeminiProvider", "OllamaProvider"]
+__all__ = ["OllamaProvider", "OpenRouterProvider"]

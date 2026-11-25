@@ -10,32 +10,42 @@ export default function Page() {
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(
     null,
   );
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [conversationStarted, setConversationStarted] = useState(false);
 
   function handleCitationSelect(evidenceId: string) {
     setSelectedEvidenceId(evidenceId);
-    document.getElementById(`evidence-${evidenceId}`)?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-    });
+    setEvidenceOpen(true);
+    window.setTimeout(() => {
+      document.getElementById(`evidence-${evidenceId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 0);
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${conversationStarted ? "has-conversation" : "is-welcome"} ${evidenceOpen ? "evidence-is-open" : ""}`}>
       <div className="page-intro">
         <span className="accent-line" />
-        <p>Research desk / 2019 labor code</p>
+        <p>Tra cứu pháp luật lao động / Bộ luật Lao động 2019</p>
       </div>
+      {response && evidenceOpen && <button className="evidence-toggle" type="button" onClick={() => setEvidenceOpen(false)}>‹ Thu gọn căn cứ</button>}
       <div className="workspace-grid">
         <ChatPanel
+          onConversationStart={() => setConversationStarted(true)}
           onResponse={(nextResponse) => {
             setResponse(nextResponse);
+            setConversationStarted(true);
             setSelectedEvidenceId(null);
+            setEvidenceOpen(false);
           }}
           onCitationSelect={handleCitationSelect}
         />
         <DocumentViewer
           response={response}
           selectedEvidenceId={selectedEvidenceId}
+          isOpen={evidenceOpen}
         />
       </div>
     </main>

@@ -3,33 +3,34 @@ import type { ChatResponse } from "@/services/api";
 export default function DocumentViewer({
   response,
   selectedEvidenceId,
+  isOpen,
 }: {
   response: ChatResponse | null;
   selectedEvidenceId: string | null;
+  isOpen: boolean;
 }) {
   return (
-    <section className="panel evidence-panel">
+    <section className={`panel evidence-panel ${isOpen ? "is-open" : ""}`}>
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">Traceability</p>
-          <h2>Evidence & diagnostics</h2>
+          <p className="eyebrow">Kiểm chứng nguồn</p>
+          <h2>Căn cứ pháp lý</h2>
         </div>
         {response && (
           <span className="result-status">
-            {response.debug.status || "complete"}
+            {response.debug.status || "Hoàn tất"}
           </span>
         )}
       </div>
 
       {!response ? (
         <div className="empty-state">
-          Submit a question to see the evidence returned by the retrieval
-          pipeline.
+          Gửi câu hỏi để xem căn cứ pháp lý.
         </div>
       ) : (
         <>
           <div className="evidence-list">
-            <h3>Citations</h3>
+            <h3>Tài liệu tham chiếu</h3>
             {response.evidence.length ? (
               response.evidence.map((citation) => (
                 <article
@@ -63,7 +64,7 @@ export default function DocumentViewer({
             )}
           </div>
           <details>
-            <summary>Pipeline diagnostics</summary>
+            <summary>Thông tin chẩn đoán pipeline</summary>
             <pre>
               {JSON.stringify(response.debug.diagnostics || {}, null, 2)}
             </pre>

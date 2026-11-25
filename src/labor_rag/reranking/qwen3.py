@@ -31,17 +31,17 @@ class Qwen3Reranker(BaseReranker):
     """
 
     MODEL_NAME = "Qwen/Qwen3-Reranker-0.6B"
+    # Adjacent string literals are concatenated, so every line ends with a
+    # space; without it words fuse ("a" + "broad" -> "abroad").
     DEFAULT_INSTRUCTION = (
-        "Given a Vietnamese labor-law query, judge whether the Document contains"
-        "directly relevant information about the user's requested topic or question."
-
-        "A Document is relevant even if it answers only one part or one aspect of a"
-        "broad or comprehensive query. Do not require a single Document to answer the"
-        "entire query."
-
-        "Focus on semantic topical relevance. Do not reward documents merely because"
-        "they discuss a related legal domain, such as employment contracts in general,"
-        "unless they directly concern the requested topic."
+        "Given a Vietnamese labor-law question, judge whether the Document "
+        "contains information that helps answer the legal question being asked. "
+        "Users often write conversationally: ignore greetings, politeness and "
+        "filler such as 'cho tôi hỏi', 'tôi thắc mắc', 'ạ', and personal "
+        "storytelling, and focus on the legal issue behind them. "
+        "A Document is relevant even if it answers only one part of a broad or "
+        "multi-part question. Do not reward a Document merely because it "
+        "belongs to a related legal area unless it concerns the issue asked."
     )
 
     _PREFIX = (

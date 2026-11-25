@@ -1,0 +1,61 @@
+# Variant of labor_rag.yaml that swaps BGE for the instruction-aware Qwen3
+# reranker. Run the same eval with --config configs/labor_rag_qwen3.yaml and
+# compare against the BGE run.
+retrieval:
+  type: hybrid
+  data_path: data/processed/chunks/labor_law_legal.jsonl
+  collection: labor_law_dek21_768
+
+embedding:
+  model: huyydangg/DEk21_hcmute_embedding_v2
+
+reranker:
+  type: qwen3
+  model: Qwen/Qwen3-Reranker-0.6B   # Qwen/Qwen3-Reranker-4B also fits a Kaggle T4/P100 in fp16
+  # Instruction-aware reranker: the default instruction in reranking/qwen3.py
+  # tells it to ignore conversational filler. Override here to experiment:
+  # qwen3_instruction: "..."
+
+# Context selection after rerank. Rerank scores only rank chunks *within one
+# query*; conversational phrasing lowers every score at once, so a high absolute
+# cut-off (old default 0.60) made the pipeline abstain even when the right
+# article ranked first. Two roles now:
+#   min_score       - low floor: "is anything relevant at all?" (else abstain)
+#   relative_to_top - selection: keep chunks scoring >= ratio * top score
+# Starting values, NOT calibrated: tune with `python -m evals.sweep_context`
+# on the dev split. Scores are reranker-specific: these BGE starting values
+# must be re-calibrated for Qwen3 (yes-probability, differently distributed).
+context:
+  min_score: 0.30
+  relative_to_top: 0.60
+  max_chunks: 8
+  max_tokens: 3500
+
+generation:
+  provider: ollama
+  model: qwen3.5:4b
+
+guardrails:
+  enabled: true
+  scope_enabled: true
+  sensitive_enabled: true
+  rules_enabled: true
+  ambiguity_enabled: true
+  ambiguity_mode: broad_context
+  evidence_quality_enabled: true
+  handoff_eligible: true
+  output_enabled: true
+  require_citations: true
+  reject_invalid_citations: true
+  classifier:
+    provider: rules # use openrouter_jev after OPENROUTER_API_KEY is set
+    threshold: 0.70
+    model: typesafe/jev-1.13
+    base_url: https://openrouter.ai/api/alpha/decisions
+    timeout: 15
+    title: Labor Law RAG Guardrails
+
+# Offline query rewriting + direct "Điều N" lookup (see retrieval/query_process.py).
+# Off by default; measure with `python -m evals.run_query_understanding` first.
+query_understanding:
+  enabled: false

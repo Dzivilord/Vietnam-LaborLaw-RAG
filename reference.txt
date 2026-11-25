@@ -1,0 +1,107 @@
+🚦 BẢO VỆ ĐỒ ÁN XONG RỒI — KỂ TIẾP CHUYỆN TRAFFIC-RAG: HỆ THỐNG HỎI ĐÁP LUẬT GIAO THÔNG ĐƯỜNG BỘ VIỆT NAM
+Lại là mình đây. Sau khi bảo vệ xong đồ án tốt nghiệp Xây dựng hệ thống hỏi đáp luật giao thông đường bộ Việt Nam, mình tiếp tục lên 1 bài viết chia sẻ chi tiết hơn về quá trình mình làm và xây dựng nên nhằm cảm ơn mọi người đã quan tâm cũng như chia sẻ trao đổi thêm để phát triển dự án cá nhân này cho sau này.
+(Bài giới thiệu tổng quan trước đó mình để ở comment nha, ai chưa xem thì ngó qua 👇)
+Hiện tại đây là một hệ thống RAG (Retrieval-Augmented Generation) CƠ BẢN thôi. Mình chỉ hay tọc mạch nên nhồi thêm vài thứ cho nó xịn hơn — Agentic, HITL duyệt lại câu trả lời, HyDE, hybrid search... Nhưng thật lòng nó vẫn CHƯA phải GraphRAG hay Agentic RAG "chuẩn". Mấy cái đó mình xếp vào phần "đang học để nâng cấp" ở cuối bài.
+—
+🎯 MỤC TIÊU BÀI TOÁN
+2024–2026 là đợt cải cách luật giao thông lớn nhất nhiều năm: Luật Trật tự ATGT 36/2024, Luật Đường bộ 35/2024, và đặc biệt Nghị định 168/2024 — phạt tăng mạnh, lần đầu có trừ điểm giấy phép lái xe.
+Sao không hỏi thẳng ChatGPT/Gemini cho nhanh?
+1️⃣ LLM không cập nhật kho luật 2024–2026, hay trộn Nghị định 100/2019 (đã hết hiệu lực) với 168/2024 mới.
+2️⃣ Ảo giác pháp lý là rủi ro có đo lường được thật — một nghiên cứu năm 2024 (Dahl và cộng sự, Journal of Legal Analysis) đo LLM bịa 58–82% khi trả lời câu hỏi pháp lý cụ thể. Tự tin bịa điều luật không tồn tại luôn. Vấn đề không chỉ được chứng minh qua bài báo của tác giả mà còn được các bạn sinh viên trường luật đính chính nữa.
+→ Giải pháp là RAG: bắt hệ thống đi TÌM văn bản gốc rồi mới trả lời, thay vì để nó "nhớ mù". Mục tiêu mình đặt ra: trả lời tiếng Việt, căn cứ đúng văn bản còn hiệu lực, và mọi con số phải trích dẫn được tới cấp Điểm – Khoản – Điều.
+—
+📚 KHÂU DỮ LIỆU — TỐN THỜI GIAN NHẤT
+Trước khi viết dòng code nào, mình bỏ nguyên HAI TUẦN chỉ để... đọc luật. Càng đọc càng ngợp: văn bản này còn hiệu lực, văn bản kia hết hiệu lực một phần, nghị định này bãi bỏ nghị định nọ nhưng thông tư khác vẫn dẫn chiếu sang nó. Luật giao thông không phải một văn bản, mà là MỘT MẠNG LƯỚI văn bản dẫn chiếu lẫn nhau.
+Kết quả gom được 27 văn bản (24 còn hiệu lực + 3 hết hiệu lực giữ lại có chủ đích): 3 Luật, 7 Nghị định (trong đó NĐ 168/2024 là trái tim), 17 Thông tư chia 4 mảng — bằng lái, đăng ký xe, đăng kiểm/khí thải, tuần tra kiểm soát.
+Thật lòng: dữ liệu này mình tự build một mình nên chắc chắn còn thiếu sót — sót văn bản sửa đổi nhỏ, sót phụ lục đâu đó. Sắp tới mình sẽ dành thời gian đọc lại kỹ hơn và bổ sung các văn bản mới. Luật sửa liên tục, nên kho dữ liệu là thứ phải "nuôi" định kỳ chứ không phải làm một lần xong luôn.
+Làm sạch PDF cũng cực — luật Việt Nam PDF có đủ bẫy: header/footer lặp, bảng mức phạt dễ vỡ layout khi convert. Viết 3 script làm sạch riêng cho Luật / Nghị định / Thông tư.
+—
+✂️ PHẦN CẮT ĐOẠN DỮ LIỆU — CÚ VẤP LỚN NHẤT, CŨNG LÀ BÀI HỌC LỚN NHẤT
+Cách phổ biến là cắt văn bản thành khúc cố định 512 token. Với luật, cách này PHÁ VỠ biên trích dẫn — một đoạn dính nửa Khoản 3 + nửa Khoản 4 thì hết trích dẫn nổi "theo Khoản mấy".
+Nguyên tắc mình theo: biên đoạn phải trùng biên trích dẫn pháp lý — cắt theo Điều, rồi Khoản, rồi tới Điểm khi cần.
+Bản đầu tiên mình làm ra khoảng 2.818 đoạn, tưởng ổn. Nhưng sau khi deploy cho bạn bè trải nghiệm, thấy nhiều câu trả lời thiếu hẳn mức phạt — mình ngồi đọc lại từng dòng đối chiếu với văn bản gốc thì lộ ra một đống lỗi:
+📌 Bộ lọc bỏ đoạn ngắn dưới 30 token — nghe hợp lý nhưng vô tình vứt luôn ~70% số Điểm trong NĐ 168 (mấy Điểm luật thường rất ngắn kiểu "đ) Không có")
+📌 Ngưỡng cắt quá hiền với nghị định — trong khi mức phạt của NĐ 168 lại nằm ở cấp Điểm. Hậu quả: 469/605 Điểm (77,5%!) của NĐ 168 KHÔNG có đoạn riêng
+📌 Mẫu nhận dạng bỏ sót chữ "đ)" — bảng chữ cái tiếng Việt có chữ đ mà bộ nhận dạng chỉ được dạy a,b,c... kiểu tiếng Anh
+📌 Đoạn bị cụt đầu — cắt riêng Điểm "p) Dàn hàng ngang từ 03 xe trở lên" thì MẤT LUÔN mức phạt, vì số tiền nằm ở câu mở đầu Khoản phía trên
+Sau khi vá hết (bản thứ 6, mình đập đi làm lại tới lần 6 luôn 😅): hạ ngưỡng lọc riêng cho Điểm, siết ngưỡng cắt cho nghị định, dạy thêm mẫu nhận dạng chữ đ, và quan trọng nhất — ghép câu mở đầu Khoản vào đầu mỗi đoạn Điểm để nó tự chứa đủ thông tin (mức phạt + hành vi) mà không cần đoạn khác. Thú thật bản này vẫn chưa hoàn hảo. Mình vẫn đang đọc thêm luật thật chi tiết và học hỏi từ các anh chị đã làm qua chủ đề này, cũng như các bạn đang học luật, để hiểu sâu hơn cấu trúc văn bản mà phát triển tiếp.
+Kết quả bằng con số:
+✅ Tổng số đoạn tăng từ 2.818 → 4.423 (+57%)
+✅ Tỷ lệ Điểm bị bỏ sót trong NĐ 168 giảm từ 77,5% → chỉ còn 11,7%
+✅ Không còn bỏ sót 4 kiểu lỗi kể trên
+Đây là phần mình tự hào nhất — vì nó chỉ lộ ra khi chịu khó NGỒI ĐỌC LẠI TỪNG DÒNG đối chiếu với văn bản thật, không con số benchmark nào tự nhắc mình cả.
+—
+🔍 TÌM KIẾM — MÌNH ĐỨNG TRÊN VAI NHỮNG NGƯỜI KHỔNG LỒ
+Phần này mình học rất nhiều từ các bài báo gốc rồi ghép lại + chỉnh cho hợp văn bản luật tiếng Việt. Kể luôn từng cái cho ai muốn đào sâu:
+📄 Tìm theo NGHĨA (dense retrieval) — ý tưởng gốc từ bài DPR của Karpukhin và cộng sự (Facebook AI, 2020): thay vì khớp từ khóa, huấn luyện model để câu hỏi và đoạn văn chứa câu trả lời nằm "gần nhau" trong không gian vector. Mình học ý tưởng đó, còn model cụ thể thì chọn multilingual-e5-base (Wang và cộng sự, Microsoft 2024) — họ huấn luyện trên cả tỷ cặp câu, hỗ trợ tiếng Việt tốt.
+→ Mình LÀM THÊM: tự benchmark 4 model trên chính bộ dữ liệu của mình, và bất ngờ là e5-base thắng cả PhoBERT (model chuyên tiếng Việt). Kèm một bài học đau: model E5 bắt buộc phải thêm tiền tố "query:" / "passage:" đúng cách — mình từng quên, recall tụt ~30% mà không báo lỗi gì
+📄 Tìm theo TỪ KHÓA chính xác (BM25) — công thức xác suất kinh điển của Robertson & Zaragoza, tổng kết 2009. Cổ mà chưa bao giờ hết thời, đặc biệt hợp để bắt chính xác "168/2024/NĐ-CP" hay "Điều 7" mà tìm-theo-nghĩa hay trượt.
+→ Mình LÀM THÊM: ghép thêm bước tách từ tiếng Việt trước khi tính điểm, để "vượt đèn đỏ" được coi là một cụm chứ không bị vỡ thành 3 từ rời.
+📄 Vì sao phải xài CẢ HAI kiểu? — bài của Luan và cộng sự (2021) chỉ ra dense và sparse bắt được những tín hiệu khác nhau, kết hợp lại thì vượt trội từng cái. Còn cách trộn 2 danh sách kết quả mình dùng Reciprocal Rank Fusion (Cormack và cộng sự, 2009) — hay ở chỗ nó chỉ cần THỨ HẠNG, không cần quy đổi thang điểm giữa hai hệ vốn chẳng cùng đơn vị.
+📄 HyDE (Gao và cộng sự, 2023) — cái này thú vị nhất. Ý tưởng: câu hỏi ngắn của người dùng và đoạn văn luật dài "trông rất khác nhau", nên tìm trực tiếp hay trượt. Giải pháp ngược đời: cho LLM tự "bịa" một đoạn văn luật giả định trả lời câu hỏi đó trước, rồi lấy chính đoạn bịa đó đi tìm bản thật. Đoạn bịa có thể sai chi tiết, nhưng "văn phong" của nó gần với văn bản thật hơn hẳn câu hỏi cụt lủn.
+→ Mình ÁP DỤNG: cho câu kiểu "đèn vàng có vượt được không?" (mấy từ, không có từ khóa pháp lý nào) — HyDE cứu rõ rệt.
+Và một thứ KHÔNG có trong bài báo nào, mình tự thêm vì đặc thù NĐ 168: nghị định này hay để mức phạt tiền và mức trừ điểm ở HAI Khoản khác nhau trong cùng một Điều. Nên mình thêm bước "kéo thêm 2 Khoản lân cận" và bước "dò tham chiếu chéo" (bắt các cụm kiểu "theo Khoản X Điều Y" rồi kéo luôn đoạn được dẫn tới) — để không trả lời được nửa này mà bỏ sót nửa kia.
+Con số ấn tượng nhất cả khâu này: chỉ riêng bước cho LLM viết lại câu hỏi thành nhiều cách diễn đạt đã kéo độ phủ đúng (Recall@10) từ 0,324 lên 0,581 — tăng nhiều nhất trong TOÀN BỘ quá trình tối ưu, mà chi phí gần như không đổi.
+(Link đầy đủ các bài báo mình để ở cuối bài / comment cho ai cần 👇)
+—
+🛡️ CHỐNG BỊA — 3 LỚP
+Prompt với 15 quy tắc cứng: chỉ dùng đúng ngữ cảnh đã truy xuất, không suy luận thêm, mọi số tiền phải kèm trích dẫn, thiếu thông tin thì từ chối chứ không đoán
+Ép model trả lời theo khuôn dữ liệu có sẵn (không để nó viết văn xuôi tự do rồi mình đi mò trích dẫn trong đó)
+Lọc lại lần cuối: đối chiếu từng trích dẫn model đưa ra với danh sách đoạn THỰC SỰ có trong ngữ cảnh — cái nào bịa ra (kiểu "Điều 99" không tồn tại) thì cắt bỏ trước khi hiện cho người dùng
+Hiệu quả: điểm chính xác trích dẫn tăng từ 0,032 (không prompt gì cả) lên 0,279 — gấp 8,7 lần.
+—
+🤖 PHẦN "NHỒI CHO XỊN" — ĐIỀU PHỐI + CON NGƯỜI DUYỆT LẠI
+Thật lòng phần này nghe kêu ("Agentic! Human-in-the-loop!") nhưng bản chất chỉ là một máy trạng thái rẽ nhánh theo loại câu hỏi — chưa phải agent tự lên kế hoạch nhiều bước. Mình gọi nó là "RAG có điều phối" cho đúng bản chất.
+Nhưng nó giải quyết 3 vấn đề thật:
+→ Câu xã giao/ngoài phạm vi thì không cần tốn tiền gọi LLM tra cứu luật
+→ Câu ngoài kho dữ liệu thì tự chuyển sang tìm trên web
+→ Và đây là phần mình thích nhất: câu trả lời lấy từ web KHÔNG được gửi thẳng cho người dùng. Hệ thống dừng lại, lưu trạng thái, để một admin đọc qua rồi mới duyệt hoặc từ chối. Với domain pháp luật, có người duyệt lại không phải "vì chưa đủ AI" — đó là một tính năng cần thiết.
+—
+📊 PHẦN ĐÁNH GIÁ — DÀNH 1/3 THỜI GIAN ĐỒ ÁN CHO NÓ
+Làm RAG mà không đo đạc thì mọi quyết định chỉ là "mình thấy có vẻ ổn". Mình xây bộ 40 câu hỏi thực tế, chia 8 nhóm, chạy 10 thực nghiệm đối chứng (mỗi lần chỉ đổi đúng 1 yếu tố).
+Vài con số đáng nhớ:
+✅ Recall@10 = 0,581 (tăng 2,9 lần so với cách cắt đoạn thô)
+✅ Độ chính xác trích dẫn tăng 8,7 lần nhờ prompt đầy đủ quy tắc
+✅ Định tuyến đúng loại câu hỏi: 97,5%
+✅ Chi phí chỉ ~0,0034 USD/câu hỏi (~46 USD/tháng cho 10.000 lượt hỏi)
+⚠️ Nhưng độ phủ ngữ cảnh chỉ đạt 0,452 — nghĩa là hệ thống mới bắt được khoảng 45% dữ kiện cần thiết. Đây là điểm nghẽn thật, đặc biệt với câu hỏi cần nhảy qua nhiều điều luật tham chiếu nhau.
+Một phát hiện mình khá tâm đắc: nếu chỉ nhìn điểm F1 (đo trùng chữ với đáp án) thì phương án "chỉ dùng LLM không cần tra cứu gì" lại có điểm CAO NHẤT — vì viết trôi chảy, trùng nhiều cụm từ. Nhưng trích dẫn sai be bét. May là mình có đo thêm độ chính xác trích dẫn riêng, chứ nhìn mỗi F1 là chọn nhầm hướng làm luôn.
+Và một bài học buồn cười: đi soát lại kỹ thì phát hiện 6/40 câu hỏi mẫu của chính mình có đáp án sai lệch so với văn bản thật 😅 Bộ dữ liệu đánh giá cũng là sản phẩm, cũng phải kiểm tra như code vậy.
+—
+☁️ TRIỂN KHAI — 0 ĐỒNG/THÁNG
+Frontend trên Vercel, backend trên Hugging Face Spaces, database vector trên bản miễn phí, tất cả free tier. Có luôn kiểm tra tự động mỗi lần đổi code: nếu độ phủ tìm kiếm tụt dưới ngưỡng, hoặc có văn bản hết hiệu lực lọt vào kết quả — chặn thay đổi luôn, không cho merge.
+Demo sống ở đây, mọi người thử hỏi được luôn:
+🌐 https://traffic-rag.vercel.app
+Lưu ý: vì chạy hoàn toàn free nên hệ thống có thể bị nghẽn — số lượt gọi trong 1 phút của Gemini API bản free bị giới hạn. Bạn nào test mà hệ thống không phản hồi thì thông cảm giúp mình nhá 🙏
+—
+🎓 THÀNH THẬT VỀ HẠN CHẾ — VÀ ĐIỀU MÌNH ĐANG HỌC TIẾP
+Đây là RAG cơ bản làm cẩn thận, không hơn. Bộ đánh giá còn nhỏ, độ phủ ngữ cảnh chưa cao, và mô hình miễn phí mình dùng để test bị giới hạn tần suất khá phiền.
+Thời gian tới mình sẽ học và nâng cấp thêm:
+🔸 GraphRAG — vì luật bản chất là một đồ thị dẫn chiếu (điều này thay thế điều kia, khoản này dẫn chiếu khoản nọ), biểu diễn tường minh bằng đồ thị sẽ giải quyết đúng điểm nghẽn tham chiếu chéo ở trên
+🔸 Multi-agent thực thụ — tách vai truy xuất / phân tích / tổng hợp / thẩm định thành các tác tử riêng, kiểm tra chéo lẫn nhau
+🔸 Mở rộng bộ đánh giá, chuyển sang mô hình ổn định hơn
+Hẹn viết bài kể chuyện nâng cấp khi làm xong — lần này hứa không để dang dở lâu như bài này nữa
+—
+📚 CÁC BÀI BÁO MÌNH ĐÃ HỌC (cho ai muốn đào sâu)
+• RAG (nền tảng cả hệ thống) — Lewis và cộng sự, 2020: https://arxiv.org/abs/2005.11401
+• DPR — tìm theo nghĩa — Karpukhin và cộng sự, 2020: https://arxiv.org/abs/2004.04906
+• Model embedding E5 — Wang và cộng sự, 2024: https://arxiv.org/abs/2402.05672
+• BM25 — Robertson & Zaragoza, 2009: https://doi.org/10.1561/1500000019
+• Vì sao kết hợp dense + sparse — Luan và cộng sự, 2021: https://arxiv.org/abs/2005.00181
+• RRF (cách trộn kết quả) — Cormack và cộng sự, 2009: https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf
+• HyDE — Gao và cộng sự, 2023: https://arxiv.org/abs/2212.10496
+• Con người duyệt lại (cảm hứng HITL) — WebGPT, Nakano và cộng sự, 2022: https://arxiv.org/abs/2112.09332
+• Đo lường RAG bằng LLM — RAGAS, Es và cộng sự, 2024: https://arxiv.org/abs/2309.15217
+• Ảo giác pháp lý của LLM — Dahl và cộng sự, 2024: https://arxiv.org/abs/2401.01301
+—
+💛 LỜI CẢM ƠN
+Mình xin gửi lời cảm ơn chân thành đến cô hướng dẫn — TS. Trần Thị Minh Hạnh — đã tận tình định hướng và góp ý cho mình suốt quá trình làm đồ án.
+Cảm ơn khóa học LLMOps & AgentOps Thực Chiến của COLE cùng các anh mentor đã kiên nhẫn chỉ dạy, chia sẻ kinh nghiệm thực chiến và luôn sẵn sàng giải đáp mỗi khi mình bí:
+🔹 Anh Phạm Thanh Danh — Senior AI/ML Engineer
+🔹 Anh Nguyễn Bá Thiêm — Senior AI/ML Engineer
+🔹 TS. Lê Thiện Hòa
+Rất nhiều kiến thức nền tảng trong dự án này mình học được là nhờ khóa học và các anh. Biết ơn thật nhiều ạ.
+(Khóa học: https://cole.vn/san-pham/bootcamp-llmlops-agentops)
+—
+Nếu bạn cũng đang làm RAG cho tài liệu có cấu trúc phân cấp (luật, quy chuẩn, sổ tay nội bộ...) hoặc thấy chỗ nào mình làm chưa tối ưu, rất mong được trao đổi ở phần bình luận ạ.
+🌐 Demo: https://traffic-rag.vercel.app

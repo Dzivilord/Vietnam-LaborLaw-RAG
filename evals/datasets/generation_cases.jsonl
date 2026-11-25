@@ -1,0 +1,2 @@
+# Copy only cases that have `answer` and `retrieval_context` here before enabling DEEPEVAL_RUN_LLM_JUDGE.
+# This file is intentionally empty until a labelled generation dataset is available.

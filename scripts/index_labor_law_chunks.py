@@ -79,6 +79,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--qdrant-path",
+        default=None,
+        help="Embedded local Qdrant directory (no server, e.g. on Kaggle). Overrides --qdrant-url.",
+    )
+
+    parser.add_argument(
         "--qdrant-api-key",
         default=None,
         help="Optional Qdrant API key.",
@@ -277,6 +283,7 @@ def main() -> None:
         collection_name=collection_name,
         url=args.qdrant_url,
         api_key=args.qdrant_api_key,
+        path=args.qdrant_path,
     )
 
     # 4. Run the project's simple indexing flow:

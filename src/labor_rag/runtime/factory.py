@@ -43,6 +43,7 @@ def validate_runtime_config(config: RAGRuntimeConfig) -> None:
     c = config.context
     a = config.ambiguity
     g = config.generation
+    gr = config.guardrails
 
     if r.top_k <= 0 or r.candidate_k <= 0:
         raise ValueError("retrieval top_k/candidate_k must be greater than 0.")
@@ -78,6 +79,12 @@ def validate_runtime_config(config: RAGRuntimeConfig) -> None:
         raise ValueError("Invalid generation temperature/token configuration.")
     if g.timeout <= 0:
         raise ValueError("generation.timeout must be greater than 0.")
+    if not 0.0 <= gr.classifier.threshold <= 1.0:
+        raise ValueError("guardrails.classifier.threshold must be between 0 and 1.")
+    if gr.classifier.provider == "jev" and not gr.classifier.model:
+        raise ValueError("guardrails.classifier.model is required when provider is 'jev'.")
+    if gr.classifier.timeout <= 0:
+        raise ValueError("guardrails.classifier.timeout must be greater than 0.")
 
 
 def _build_embedder(config: RAGRuntimeConfig):
@@ -110,6 +117,7 @@ def _build_dense_retriever(config: RAGRuntimeConfig):
         collection_name=collection,
         url=retrieval.qdrant_url,
         api_key=retrieval.qdrant_api_key,
+        path=str(retrieval.qdrant_path) if retrieval.qdrant_path else None,
     )
     return DenseRetriever(embedder=embedder, store=store), embedder, collection
 
@@ -127,7 +135,41 @@ def _build_bm25_retriever(config: RAGRuntimeConfig):
     )
 
 
+def _wrap_query_understanding(retriever, config: RAGRuntimeConfig):
+    """Wrap ``retriever`` with offline query rewriting / article lookup if enabled."""
+    qu = config.query_understanding
+    if not qu.enabled:
+        return retriever
+    if config.retrieval.data_path is None:
+        raise ValueError("query_understanding requires retrieval.data_path (chunk JSONL).")
+
+    import json
+
+    from labor_rag.retrieval.query_process import QueryAwareRetriever, QueryProcessor
+
+    path = Path(config.retrieval.data_path)
+    chunks = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    processor = QueryProcessor(
+        (chunk.get("content", "") for chunk in chunks),
+        expand_terms=qu.expand_terms,
+        restore_diacritics=qu.restore_diacritics,
+        expand_abbreviations=qu.expand_abbreviations,
+    )
+    return QueryAwareRetriever(
+        retriever, chunks, processor=processor, article_lookup=qu.article_lookup
+    )
+
+
 def build_retriever(config: RAGRuntimeConfig):
+    retriever, embedder, collection = _build_base_retriever(config)
+    return _wrap_query_understanding(retriever, config), embedder, collection
+
+
+def _build_base_retriever(config: RAGRuntimeConfig):
     retrieval = config.retrieval
     if retrieval.method == "bm25":
         return _build_bm25_retriever(config), None, None
@@ -225,6 +267,69 @@ def build_ambiguity_classifier(config: RAGRuntimeConfig):
     )
 
 
+def build_guardrail_service(config: RAGRuntimeConfig):
+    """Build local rules or a local JEV classifier behind one policy API."""
+    from labor_rag.guardrails import GuardrailService, GuardrailSettings, JEVClassifier, OpenRouterJEVClassifier, RuleBasedClassifier
+
+    guardrails = config.guardrails
+    classifier_config = guardrails.classifier
+    classifier = RuleBasedClassifier()
+    if classifier_config.provider == "openrouter_jev":
+        classifier = OpenRouterJEVClassifier(
+            model=classifier_config.model or OpenRouterJEVClassifier.DEFAULT_MODEL,
+            base_url=classifier_config.base_url,
+            timeout=classifier_config.timeout,
+            referer=classifier_config.referer,
+            title=classifier_config.title,
+        )
+    elif classifier_config.provider == "jev":
+        try:
+            from transformers import pipeline
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise RuntimeError("JEV guardrail requires transformers; install the project dependencies.") from exc
+        device = classifier_config.device
+        if device is None or device == "cpu":
+            transformer_device = -1
+        elif device.startswith("cuda:"):
+            transformer_device = int(device.split(":", 1)[1])
+        elif device == "cuda":
+            transformer_device = 0
+        else:
+            transformer_device = -1
+        classifier_pipeline = pipeline(
+            "text-classification",
+            model=classifier_config.model,
+            tokenizer=classifier_config.model,
+            device=transformer_device,
+            top_k=None,
+        )
+
+        def predict(query: str) -> dict[str, float]:
+            predictions = classifier_pipeline(query)
+            if predictions and isinstance(predictions[0], list):
+                predictions = predictions[0]
+            return {item["label"]: float(item["score"]) for item in predictions}
+
+        classifier = JEVClassifier(predict)
+    return GuardrailService(
+        GuardrailSettings(
+            enabled=guardrails.enabled,
+            scope_enabled=guardrails.scope_enabled,
+            sensitive_enabled=guardrails.sensitive_enabled,
+            rules_enabled=guardrails.rules_enabled,
+            classifier_threshold=classifier_config.threshold,
+            ambiguity_enabled=guardrails.ambiguity_enabled,
+            ambiguity_mode=guardrails.ambiguity_mode,
+            evidence_quality_enabled=guardrails.evidence_quality_enabled,
+            handoff_eligible=guardrails.handoff_eligible,
+            output_enabled=guardrails.output_enabled,
+            require_citations=guardrails.require_citations,
+            reject_invalid_citations=guardrails.reject_invalid_citations,
+        ),
+        classifier=classifier,
+    )
+
+
 def build_retrieval_context_pipeline(config: RAGRuntimeConfig):
     from labor_rag.pipelines.rag_pipeline import (
         RetrievalContextPipeline,
@@ -256,16 +361,24 @@ def build_generator(config: RAGRuntimeConfig):
         return None
 
     from labor_rag.generation import GenerationConfig, RAGGenerator
-    from labor_rag.generation.providers import GeminiProvider, OllamaProvider
+    from labor_rag.generation.providers import OllamaProvider, OpenRouterProvider
 
-    if generation.provider == "gemini":
-        provider = GeminiProvider(model=generation.model)
-    else:
+    if generation.provider == "ollama":
         provider = OllamaProvider(
             model=generation.model,
             base_url=generation.ollama_url,
             timeout=generation.timeout,
             think=generation.ollama_think,
+        )
+    else:
+        provider = OpenRouterProvider(
+            model=generation.model,
+            fallback_models=generation.fallback_models,
+            api_key=generation.openrouter_api_key,
+            base_url=generation.openrouter_base_url,
+            referer=generation.openrouter_referer,
+            title=generation.openrouter_title,
+            timeout=generation.timeout,
         )
 
     return RAGGenerator(
@@ -286,6 +399,7 @@ def build_application_pipeline(config: RAGRuntimeConfig):
         LaborLawRAGPipeline(
             retrieval_pipeline=retrieval_pipeline,
             generator=build_generator(config),
+            guardrails=build_guardrail_service(config),
         ),
         embedder,
         collection,
