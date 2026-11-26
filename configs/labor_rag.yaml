@@ -33,15 +33,24 @@ guardrails:
   sensitive_enabled: true
   rules_enabled: true
   ambiguity_enabled: true
-  ambiguity_mode: broad_context
+  # clarify_after_retrieval: an "ambiguous" query still retrieves, then returns
+  # topic suggestions (Điều + title) and the related evidence, no LLM answer.
+  ambiguity_mode: clarify_after_retrieval
+  # "unknown" (needs a source outside BLLĐ 2019) stops before retrieval.
+  unknown_action: abstain
   evidence_quality_enabled: true
   handoff_eligible: true
   output_enabled: true
   require_citations: true
   reject_invalid_citations: true
   classifier:
-    provider: rules # use openrouter_jev after OPENROUTER_API_KEY is set
+    provider: openrouter_jev # use openrouter_jev after OPENROUTER_API_KEY is set
     threshold: 0.70
+    # Per-label overrides are supported (e.g. label_thresholds: {unknown: 0.35})
+    # but not used: the router only has to stop off-topic/sensitive queries;
+    # ambiguous and unknown-corpus ones may pass and are handled after
+    # retrieval, so lowering their thresholds would only add false-block risk.
+    label_thresholds: {}
     model: typesafe/jev-1.13
     base_url: https://openrouter.ai/api/alpha/decisions
     timeout: 15

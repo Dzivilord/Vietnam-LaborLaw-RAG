@@ -81,6 +81,9 @@ def validate_runtime_config(config: RAGRuntimeConfig) -> None:
         raise ValueError("generation.timeout must be greater than 0.")
     if not 0.0 <= gr.classifier.threshold <= 1.0:
         raise ValueError("guardrails.classifier.threshold must be between 0 and 1.")
+    for label, value in gr.classifier.label_thresholds.items():
+        if not 0.0 <= float(value) <= 1.0:
+            raise ValueError(f"guardrails.classifier.label_thresholds.{label} must be between 0 and 1.")
     if gr.classifier.provider == "jev" and not gr.classifier.model:
         raise ValueError("guardrails.classifier.model is required when provider is 'jev'.")
     if gr.classifier.timeout <= 0:
@@ -318,8 +321,10 @@ def build_guardrail_service(config: RAGRuntimeConfig):
             sensitive_enabled=guardrails.sensitive_enabled,
             rules_enabled=guardrails.rules_enabled,
             classifier_threshold=classifier_config.threshold,
+            label_thresholds=dict(classifier_config.label_thresholds),
             ambiguity_enabled=guardrails.ambiguity_enabled,
             ambiguity_mode=guardrails.ambiguity_mode,
+            unknown_action=guardrails.unknown_action,
             evidence_quality_enabled=guardrails.evidence_quality_enabled,
             handoff_eligible=guardrails.handoff_eligible,
             output_enabled=guardrails.output_enabled,

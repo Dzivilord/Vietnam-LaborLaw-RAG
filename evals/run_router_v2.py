@@ -7,8 +7,14 @@ only pays for queries it has not seen.
     python -m evals.run_router_v2 --split dev --show-errors
     python -m evals.run_router_v2 --split heldout --no-cache
 
-Metrics: leak_rate, false_block_rate, route/action accuracy + macro-F1, accuracy
-per category, p95 latency and error rate of the classifier.
+Router goal: *must-block* off-topic (out_of_scope) and sensitive queries, never
+block answerable ones. Ambiguous and unknown-corpus queries are *soft*: blocking
+them correctly is a bonus, letting them through is acceptable because retrieval
+and the evidence gate handle them downstream.
+
+Headline metrics: critical_leak_rate (must-block answered), false_block_rate,
+acceptable_rate. Also reported: soft_pass_rate, strict accuracy/macro-F1 per
+route and action, accuracy per category, p95 latency, error rate.
 Outputs: evals/runs/<run_id>.jsonl (per case) and evals/reports/<run_id>.json.
 """
 
@@ -36,6 +42,17 @@ ROUTE_MAP = {
     "unknown": "unknown",
 }
 BLOCKING_ACTIONS = {"refuse", "abstain", "clarify"}
+# Routes the router itself must stop. Everything else expected to be blocked
+# (ambiguous -> clarify, unknown -> abstain) is "soft" and may pass through.
+MUST_BLOCK_ROUTES = {"out_of_scope", "sensitive"}
+
+
+def is_must_block(row: dict) -> bool:
+    return row["expected_route"] in MUST_BLOCK_ROUTES
+
+
+def is_soft(row: dict) -> bool:
+    return row["expected_action"] in BLOCKING_ACTIONS and not is_must_block(row)
 
 
 def load_cases(path: str | Path, split: str = "all") -> list[dict]:
@@ -57,6 +74,9 @@ def load_cases(path: str | Path, split: str = "all") -> list[dict]:
 def actual_labels(decision) -> tuple[str, str]:
     route = ROUTE_MAP.get(decision.category, "labor_law")
     action = ACTION_MAP.get(decision.action, decision.action)
+    if decision.metadata.get("clarify_after_retrieval"):
+        # The router already decided "clarify"; it is only executed after retrieval.
+        action = "clarify"
     return route, action
 
 
@@ -73,16 +93,28 @@ def summarize(rows: list[dict]) -> dict:
             "route_accuracy": round(sum(r["expected_route"] == r["actual_route"] for r in items) / n, 4),
             "action_accuracy": round(sum(r["expected_action"] == r["actual_action"] for r in items) / n, 4),
             "route_and_action_accuracy": round(sum(_correct(r) for r in items) / n, 4),
+            "acceptable_rate": round(sum(_acceptable(r) for r in items) / n, 4),
             "actual_action_counts": dict(Counter(r["actual_action"] for r in items)),
         }
-    should_answer = [r for r in rows if r["expected_action"] == "answer"]
-    should_block = [r for r in rows if r["expected_action"] in BLOCKING_ACTIONS]
+    # Leak/false-block are measured on cases the classifier actually decided;
+    # failed calls are reported separately as error_rate.
+    decided = [r for r in rows if r["actual_action"] != "error"]
+    should_answer = [r for r in decided if r["expected_action"] == "answer"]
+    should_block = [r for r in decided if r["expected_action"] in BLOCKING_ACTIONS]
+    must_block = [r for r in decided if is_must_block(r)]
+    soft = [r for r in decided if is_soft(r)]
     latencies = [r["latency_ms"] for r in rows if r.get("latency_ms") is not None and not r.get("cached")]
     return {
+        # Off-topic / sensitive queries that were answered: the failure that matters.
+        "critical_leak_rate": _rate(r["actual_action"] == "answer" for r in must_block),
         # Answerable questions the router did not let through (over-blocking).
         "false_block_rate": _rate(r["actual_action"] != "answer" for r in should_answer),
-        # Questions that should have been refused/abstained/clarified but were let through.
-        "leak_rate": _rate(r["actual_action"] == "answer" for r in should_block),
+        # Correct, or a soft case that was let through.
+        "acceptable_rate": _rate(_acceptable(r) for r in rows),
+        # Ambiguous / unknown-corpus queries passed on to retrieval (informational).
+        "soft_pass_rate": _rate(r["actual_action"] == "answer" for r in soft),
+        # Strict: every expected block (incl. soft) that was let through.
+        "leak_rate_all": _rate(r["actual_action"] == "answer" for r in should_block),
         # Blocked correctly *and* with the right action (refuse vs abstain vs clarify).
         "correct_block_action_rate": _rate(r["actual_action"] == r["expected_action"] for r in should_block),
         "route_and_action_accuracy": _rate(_correct(r) for r in rows),
@@ -98,12 +130,30 @@ def _correct(row: dict) -> bool:
     return row["expected_route"] == row["actual_route"] and row["expected_action"] == row["actual_action"]
 
 
+def _acceptable(row: dict) -> bool:
+    """Strictly correct, or a soft case that the router let through."""
+    return _correct(row) or (is_soft(row) and row["actual_action"] == "answer")
+
+
 def _rate(flags) -> float | None:
     flags = list(flags)
     return round(sum(flags) / len(flags), 4) if flags else None
 
 
+MAX_CONSECUTIVE_ERRORS = 5
+# "cannot be relayed": OpenRouter management/provisioning keys cannot call model endpoints.
+FATAL_MARKERS = ("HTTP 401", "HTTP 403", "Missing OPENROUTER_API_KEY", "cannot be relayed")
+
+
+def _is_fatal(error: str) -> bool:
+    """Auth/config errors will fail every remaining case, so stop at once."""
+    return any(marker in error for marker in FATAL_MARKERS)
+
+
 # ---------------------------------------------------------------- cache
+# Only the *classifier call* is cached (label, confidence, probabilities) - the
+# paid part. Policy (thresholds, ambiguity/unknown modes, rules) is re-applied
+# on every run, so tuning it never triggers new API calls.
 def _cache_key(classifier_fingerprint: str, query: str) -> str:
     return hashlib.sha256(f"{classifier_fingerprint}\n{query}".encode("utf-8")).hexdigest()
 
@@ -119,6 +169,35 @@ def _load_cache(path: Path) -> dict[str, dict]:
     return cache
 
 
+class CachingClassifier:
+    """Wraps the semantic classifier; serves repeated queries from the cache."""
+
+    def __init__(self, inner, fingerprint: str, cache: dict[str, dict]) -> None:
+        self.inner, self.fingerprint, self.cache = inner, fingerprint, cache
+        self.new_entries: list[dict] = []
+        self.last_hit: bool | None = None  # None: classifier not consulted (a rule decided)
+
+    def classify(self, query: str):
+        from labor_rag.guardrails.schemas import QueryClassification
+
+        key = _cache_key(self.fingerprint, query)
+        item = self.cache.get(key)
+        if item is not None:
+            self.last_hit = True
+            data = dict(item["classification"])
+            data["matched_rules"] = tuple(data.get("matched_rules", ()))
+            return QueryClassification(**data)
+        self.last_hit = False
+        result = self.inner.classify(query)
+        entry = {"key": key, "query": query, "classification": {
+            "label": result.label, "confidence": result.confidence, "scores": dict(result.scores),
+            "source": result.source, "matched_rules": list(result.matched_rules),
+        }}
+        self.cache[key] = entry
+        self.new_entries.append(entry)
+        return result
+
+
 def _classify(service, query: str) -> dict[str, Any]:
     started = perf_counter()
     try:
@@ -129,7 +208,8 @@ def _classify(service, query: str) -> dict[str, Any]:
     return {
         "actual_route": route, "actual_action": action,
         "guardrail_action": decision.action, "guardrail_category": decision.category,
-        "confidence": decision.confidence, "matched_rules": decision.metadata.get("matched_rules", []),
+        "confidence": decision.confidence, "scores": decision.metadata.get("scores", {}),
+        "matched_rules": decision.metadata.get("matched_rules", []),
         "latency_ms": round((perf_counter() - started) * 1000, 2), "error": None,
     }
 
@@ -147,8 +227,8 @@ def main() -> None:
     parser.add_argument("--config", default="configs/labor_rag.yaml")
     parser.add_argument("--split", choices=["all", "dev", "heldout"], default="all")
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--cache", default="evals/cache/router_decisions.jsonl", help="Decision cache (JSONL).")
-    parser.add_argument("--no-cache", action="store_true", help="Ignore cached decisions and call the classifier again.")
+    parser.add_argument("--cache", default="evals/cache/router_classifications.jsonl", help="Classifier-call cache (JSONL).")
+    parser.add_argument("--no-cache", action="store_true", help="Ignore cached classifications and call the classifier again.")
     parser.add_argument("--output", default=None)
     parser.add_argument("--show-errors", action="store_true", help="Print misrouted queries.")
     args = parser.parse_args()
@@ -160,37 +240,51 @@ def main() -> None:
     service = build_guardrail_service(config)
     cases = load_cases(args.cases, args.split)[: args.limit]
     clf = config.guardrails.classifier
+    # Cache identity = what produces the classification, not the policy around it.
+    # The classifier's own fingerprint covers its prompt/criteria, so editing them
+    # invalidates the cache instead of silently reusing old labels.
     fingerprint = json.dumps({
-        "provider": clf.provider, "model": clf.model, "threshold": clf.threshold,
-        "guardrails": {k: getattr(config.guardrails, k) for k in ("scope_enabled", "sensitive_enabled", "rules_enabled", "ambiguity_enabled", "ambiguity_mode")},
+        "provider": clf.provider, "model": clf.model, "base_url": clf.base_url,
+        "prompt": getattr(service.classifier, "fingerprint", None),
     }, sort_keys=True)
 
     cache_path = Path(args.cache)
-    # The offline rules classifier is free and its code changes often, so its
-    # decisions are never cached (a stale cache would hide rule edits).
+    # The offline rules classifier is free, so it is never cached.
     use_cache = not args.no_cache and clf.provider != "rules"
-    cache = _load_cache(cache_path) if use_cache else {}
+    caching = None
+    if use_cache:
+        caching = CachingClassifier(service.classifier, fingerprint, _load_cache(cache_path))
+        service.classifier = caching
     meta = tracing.run_metadata(
         "router", config_path=args.config, dataset=args.cases, split=args.split,
         classifier=clf.provider, classifier_model=clf.model, classifier_threshold=clf.threshold,
+        label_thresholds=dict(clf.label_thresholds), ambiguity_mode=config.guardrails.ambiguity_mode,
+        unknown_action=config.guardrails.unknown_action,
     )
     tracing.configure()
 
     rows: list[dict] = []
-    new_cache: list[dict] = []
+    consecutive_errors = 0
     with tracing.run_span(meta) as run_handle:
         for index, case in enumerate(cases, start=1):
-            key = _cache_key(fingerprint, case["query"])
             with tracing.case_span(meta, case) as handle:
-                cached = cache.get(key)
-                if cached and not cached.get("error"):
-                    result, from_cache = dict(cached["result"]), True
-                else:
-                    result, from_cache = _classify(service, case["query"]), False
-                    if use_cache and not result.get("error"):
-                        new_cache.append({"key": key, "query": case["query"], "result": result})
+                if caching is not None:
+                    caching.last_hit = None
+                result = _classify(service, case["query"])
+                # Paid call avoided when served from cache or decided by a rule.
+                from_cache = bool(caching and caching.last_hit is not False)
                 if result.get("error"):
-                    result.update({"actual_route": None, "actual_action": "error"})
+                    # "error" (not None) so accuracy counts failed calls as wrong.
+                    result.update({"actual_route": "error", "actual_action": "error"})
+                    consecutive_errors += 1
+                    if _is_fatal(result["error"]) or consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                        raise SystemExit(
+                            f"Aborting after {index}/{len(cases)} cases: classifier keeps failing "
+                            f"({consecutive_errors} in a row). Last error: {result['error'][:300]}\n"
+                            "Nothing was written; fix the classifier (API key, URL, quota) and re-run."
+                        )
+                else:
+                    consecutive_errors = 0
                 row = {
                     "id": case["id"], "query": case["query"], "category": case["category"],
                     "subcategory": case.get("subcategory"), "split": case.get("split"),
@@ -198,10 +292,13 @@ def main() -> None:
                     **result, "cached": from_cache,
                 }
                 row["correct"] = _correct(row)
+                row["acceptable"] = _acceptable(row)
                 rows.append(row)
                 tracing.set_outcome(
                     handle, actual_route=row["actual_route"], actual_action=row["actual_action"],
-                    correct=row["correct"], leaked=row["expected_action"] in BLOCKING_ACTIONS and row["actual_action"] == "answer",
+                    correct=row["correct"], acceptable=row["acceptable"],
+                    critical_leak=is_must_block(row) and row["actual_action"] == "answer",
+                    leaked=row["expected_action"] in BLOCKING_ACTIONS and row["actual_action"] == "answer",
                     false_block=row["expected_action"] == "answer" and row["actual_action"] != "answer",
                     confidence=row.get("confidence"), cached=from_cache, error=row.get("error"),
                 )
@@ -217,7 +314,8 @@ def main() -> None:
             "route": classification_report(ns, "expected_route", "actual_route"),
             "action": classification_report(ns, "expected_action", "actual_action"),
             "summary": summary,
-            "errors": [r for r in rows if not r["correct"]],
+            "errors": [r for r in rows if not r["acceptable"]],
+            "soft_passes": [r for r in rows if r["acceptable"] and not r["correct"]],
         }
         headline = {k: v for k, v in summary.items() if k != "by_category"}
         headline.update({"route_accuracy": report["route"]["accuracy"], "route_macro_f1": report["route"]["macro_f1"],
@@ -225,10 +323,10 @@ def main() -> None:
         tracing.log_summary(meta, {"router": headline, "by_category": {k: {"accuracy": v["route_and_action_accuracy"]} for k, v in summary["by_category"].items()}}, run_handle)
     tracing.flush()
 
-    if new_cache:
+    if caching is not None and caching.new_entries:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         with cache_path.open("a", encoding="utf-8") as stream:
-            for item in new_cache:
+            for item in caching.new_entries:
                 stream.write(json.dumps(item, ensure_ascii=False) + "\n")
 
     run_out = Path(f"evals/runs/{meta['run_id']}.jsonl")
@@ -238,19 +336,26 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"run_id={meta['run_id']} cases={len(rows)} split={args.split} classifier={clf.provider} "
+    print(f"config={args.config} run_id={meta['run_id']} cases={len(rows)} split={args.split} classifier={clf.provider} "
           f"cache_hits={report['cache']['hits']} new_calls={report['cache']['new_calls']}")
-    print(f"leak_rate={summary['leak_rate']}  false_block_rate={summary['false_block_rate']}  "
-          f"correct_block_action_rate={summary['correct_block_action_rate']}")
+    print(f"critical_leak_rate={summary['critical_leak_rate']}  false_block_rate={summary['false_block_rate']}  "
+          f"acceptable_rate={summary['acceptable_rate']}")
+    print(f"soft_pass_rate={summary['soft_pass_rate']} (ambiguous/unknown let through - allowed)  "
+          f"leak_rate_all={summary['leak_rate_all']}  correct_block_action_rate={summary['correct_block_action_rate']}")
     print(f"route accuracy={report['route']['accuracy']} macro_f1={report['route']['macro_f1']} | "
           f"action accuracy={report['action']['accuracy']} macro_f1={report['action']['macro_f1']}")
     print(f"error_rate={summary['error_rate']}  p95_latency_ms={summary['p95_latency_ms']}")
-    print(f"{'category':26} {'n':>3} {'route':>6} {'action':>7} {'both':>6}")
+    if summary["error_rate"]:
+        print(f"WARNING: {summary['error_rate']:.0%} of classifier calls failed; metrics cover only the decided cases. "
+              "See the 'error' field in the per-case file.")
+    print(f"{'category':26} {'n':>3} {'route':>6} {'action':>7} {'strict':>7} {'accept':>7}")
     for cat, s in summary["by_category"].items():
-        print(f"{cat:26} {s['count']:>3} {s['route_accuracy']:>6} {s['action_accuracy']:>7} {s['route_and_action_accuracy']:>6}")
+        print(f"{cat:26} {s['count']:>3} {s['route_accuracy']:>6} {s['action_accuracy']:>7} {s['route_and_action_accuracy']:>7} {s['acceptable_rate']:>7}")
     if args.show_errors:
         for r in report["errors"]:
-            print(f"[{r['category']}] {r['query']}  exp={r['expected_route']}/{r['expected_action']} got={r['actual_route']}/{r['actual_action']}")
+            print(f"ERROR [{r['category']}] {r['query']}  exp={r['expected_route']}/{r['expected_action']} got={r['actual_route']}/{r['actual_action']}")
+        for r in report["soft_passes"]:
+            print(f"soft  [{r['category']}] {r['query']}  (let through, allowed)")
     print(f"Per-case: {run_out}\nReport:   {out}")
 
 

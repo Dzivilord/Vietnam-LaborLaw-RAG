@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from labor_rag.generation.schemas import GenerationResult
@@ -12,7 +12,14 @@ from .classifier import BaseQueryClassifier, RuleBasedClassifier
 from .schemas import GuardrailDecision
 
 
-AmbiguityMode = Literal["clarify", "broad_context"]
+# clarify                 - stop before retrieval with a generic "add details" message
+# clarify_after_retrieval - flag the query, still retrieve, then return grounded topic
+#                           suggestions + the related evidence instead of an answer
+# broad_context           - ignore the ambiguity label and answer from broad context
+AmbiguityMode = Literal["clarify", "clarify_after_retrieval", "broad_context"]
+# abstain  - questions labelled "unknown" (need a source outside the corpus) stop early
+# continue - let them reach retrieval; the evidence gate may still abstain
+UnknownAction = Literal["abstain", "continue"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,8 +29,12 @@ class GuardrailSettings:
     sensitive_enabled: bool = True
     rules_enabled: bool = True
     classifier_threshold: float = 0.80
+    # Per-label overrides of classifier_threshold, e.g. {"unknown": 0.35}. A
+    # 5-way classifier is naturally less confident on the subtle labels.
+    label_thresholds: dict[str, float] = field(default_factory=dict)
     ambiguity_enabled: bool = True
     ambiguity_mode: AmbiguityMode = "broad_context"
+    unknown_action: UnknownAction = "abstain"
     evidence_quality_enabled: bool = True
     handoff_eligible: bool = True
     output_enabled: bool = True
@@ -39,6 +50,9 @@ class GuardrailService:
         self.classifier = classifier or RuleBasedClassifier()
         self.rule_classifier = RuleBasedClassifier()
 
+    def threshold_for(self, label: str) -> float:
+        return float(self.settings.label_thresholds.get(label, self.settings.classifier_threshold))
+
     def check_input(self, query: str) -> GuardrailDecision:
         if not self.settings.enabled:
             return GuardrailDecision("continue", "disabled", "guardrails_disabled")
@@ -49,14 +63,27 @@ class GuardrailService:
         classified = rule_result if rule_result and rule_result.confidence else self.classifier.classify(query)
         metadata = {"classifier": classified.source, "scores": dict(classified.scores), "matched_rules": list(classified.matched_rules)}
 
-        if self.settings.sensitive_enabled and classified.label == "sensitive_or_disallowed" and classified.confidence >= self.settings.classifier_threshold:
+        confident = classified.confidence >= self.threshold_for(classified.label)
+        if self.settings.sensitive_enabled and classified.label == "sensitive_or_disallowed" and confident:
             return GuardrailDecision("refuse", classified.label, "sensitive_or_disallowed", classified.confidence, metadata=metadata)
-        if self.settings.scope_enabled and classified.label == "out_of_scope" and classified.confidence >= self.settings.classifier_threshold:
+        if self.settings.scope_enabled and classified.label == "out_of_scope" and confident:
             return GuardrailDecision("abstain", classified.label, "out_of_scope", classified.confidence, metadata=metadata)
-        # Ambiguity is deliberately not blocked before retrieval in broad mode:
-        # retrieved evidence may still support a useful general answer.
-        if self.settings.ambiguity_enabled and self.settings.ambiguity_mode == "clarify" and classified.label == "ambiguous" and classified.confidence >= self.settings.classifier_threshold:
-            return GuardrailDecision("clarify", classified.label, "ambiguous_query", classified.confidence, metadata=metadata)
+        if self.settings.scope_enabled and self.settings.unknown_action == "abstain" and classified.label == "unknown" and confident:
+            return GuardrailDecision(
+                "abstain", "unknown", "requires_source_outside_corpus", classified.confidence,
+                handoff_eligible=self.settings.handoff_eligible, metadata=metadata,
+            )
+        if self.settings.ambiguity_enabled and classified.label == "ambiguous" and confident:
+            if self.settings.ambiguity_mode == "clarify":
+                return GuardrailDecision("clarify", classified.label, "ambiguous_query", classified.confidence, metadata=metadata)
+            if self.settings.ambiguity_mode == "clarify_after_retrieval":
+                # Continue so retrieval can ground the clarification in real articles;
+                # the application pipeline turns this flag into clarification_required.
+                return GuardrailDecision(
+                    "continue", classified.label, "ambiguous_clarify_after_retrieval", classified.confidence,
+                    metadata={**metadata, "clarify_after_retrieval": True},
+                )
+        # broad_context: ambiguity is not blocked; evidence may still support a general answer.
         return GuardrailDecision("continue", classified.label, "input_allowed", classified.confidence, metadata=metadata)
 
     def check_evidence(self, evidence: list[EvidenceItem]) -> GuardrailDecision:
@@ -87,7 +114,10 @@ def user_message_for(decision: GuardrailDecision) -> str:
         return "Hệ thống này chỉ hỗ trợ truy vấn Bộ luật Lao động 2019 và không hỗ trợ các nội dung không liên quan."
     if decision.category == "sensitive_or_disallowed":
         return "Tôi không thể hỗ trợ yêu cầu nhằm né tránh nghĩa vụ hoặc gây hại. Tôi có thể hỗ trợ giải thích quy định và phương án tuân thủ pháp luật."
-    if decision.action == "clarify":
+    if decision.category == "unknown":
+        return ("Câu hỏi này cần căn cứ ngoài Bộ luật Lao động 2019 (ví dụ nghị định hướng dẫn, mức phạt, "
+                "bảo hiểm xã hội hoặc số liệu cập nhật), nên hệ thống không trả lời để tránh thông tin sai.")
+    if decision.action == "clarify" or decision.category == "ambiguous":
         return "Câu hỏi cần thêm thông tin tình huống để áp dụng quy định phù hợp. Vui lòng nêu rõ loại hợp đồng, thời điểm và hoàn cảnh liên quan."
     if decision.category in {"insufficient_evidence", "invalid_citation", "missing_citation"}:
         return "Không tìm thấy đủ căn cứ trong Bộ luật Lao động 2019 để trả lời nội dung này một cách đáng tin cậy."

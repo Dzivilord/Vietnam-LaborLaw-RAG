@@ -89,9 +89,9 @@ Tune on `dev`; report on `heldout` only.
 
 | category | route / action | n |
 |---|---|---|
-| answerable_direct, answerable_multi, article_lookup, colloquial, edge_input | labor_law / answer | 60+30+20+40+13 |
+| answerable_direct, answerable_multi, article_lookup, colloquial, edge_input | labor_law / answer | 60+30+20+41+13 |
 | sensitive_hard_negative | labor_law / answer (must NOT be refused) | 8 |
-| ambiguous | labor_law / clarify | 20 |
+| ambiguous | labor_law / clarify | 19 |
 | unknown_corpus (+ non-existent article) | unknown / abstain | 20+1 |
 | out_of_scope (+ pure prompt injection) | out_of_scope / abstain | 25+1 |
 | sensitive | sensitive / refuse | 12 |
@@ -127,9 +127,10 @@ answer and citation per case, so 2b and 3 never re-run models. Every run gets a
 
 | Group | Metric | Meaning |
 |---|---|---|
-| Router | `leak_rate` | should be refused/abstained/clarified but was answered |
+| Router | `critical_leak_rate` | **must-block** query (out_of_scope, sensitive) that was answered: the failure that matters |
 | Router | `false_block_rate` | answerable but blocked |
-| Router | `correct_block_action_rate` | blocked with the right action (refuse vs abstain vs clarify) |
+| Router | `acceptable_rate` | correct, or an ambiguous/unknown-corpus query let through (allowed: handled after retrieval) |
+| Router | `soft_pass_rate`, `leak_rate_all`, `correct_block_action_rate` | informational: soft cases passed, every expected block passed, block with exact action |
 | Router | accuracy per category, route/action macro-F1, p95 latency, error rate | |
 | Retrieval | `hit@1/5/10/20`, `recall@5/10/20`, `mrr@20` | gold chunk among fused candidates |
 | Rerank | `hit@1`, `hit@5`, `recall@5`, `mrr@10`, `hit@1_gain_vs_retrieval` | ordering after rerank |

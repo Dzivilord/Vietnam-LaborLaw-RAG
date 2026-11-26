@@ -9,7 +9,7 @@ import os
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .rules import OUT_OF_SCOPE_PATTERNS, SENSITIVE_EVASION_PATTERNS, matched_patterns
+from .rules import OUT_OF_SCOPE_PATTERNS, PROMPT_EXTRACTION_PATTERNS, SENSITIVE_EVASION_PATTERNS, matched_patterns, nonexistent_articles
 from .schemas import QueryClassification
 
 
@@ -29,11 +29,17 @@ class RuleBasedClassifier(BaseQueryClassifier):
                 label="sensitive_or_disallowed", confidence=0.99,
                 scores={"sensitive_or_disallowed": 0.99}, source="rules", matched_rules=sensitive,
             )
-        out_of_scope = matched_patterns(query, OUT_OF_SCOPE_PATTERNS)
+        out_of_scope = matched_patterns(query, OUT_OF_SCOPE_PATTERNS) + matched_patterns(query, PROMPT_EXTRACTION_PATTERNS)
         if out_of_scope:
             return QueryClassification(
                 label="out_of_scope", confidence=0.99,
                 scores={"out_of_scope": 0.99}, source="rules", matched_rules=out_of_scope,
+            )
+        missing_articles = nonexistent_articles(query)
+        if missing_articles:
+            return QueryClassification(
+                label="unknown", confidence=0.99,
+                scores={"unknown": 0.99}, source="rules", matched_rules=missing_articles,
             )
         return QueryClassification(
             label="in_scope", confidence=0.0, scores={"in_scope": 0.0}, source="rules",
@@ -86,6 +92,14 @@ class OpenRouterJEVClassifier(BaseQueryClassifier):
         "ambiguous": "Related to labor law but lacks material facts needed to apply law to the person's situation.",
         "unknown": "Related to labor law but likely requires a source outside the configured Labor Code corpus, such as a future schedule, a calculation under another law, or an administrative fine amount.",
     }
+    INSTRUCTIONS = (
+        "Classify the user's query into exactly one guardrail category. Choose sensitive_or_disallowed only "
+        "for harmful or evasive intent, not for ordinary legal compliance questions."
+    )
+    SYSTEM_SCOPE = (
+        "The application answers questions only from the Vietnamese Labor Code 2019 corpus. "
+        "It has no web lookup or human review enabled."
+    )
 
     def __init__(
         self,
@@ -106,17 +120,28 @@ class OpenRouterJEVClassifier(BaseQueryClassifier):
         self.referer = referer
         self.title = title
 
+    @property
+    def fingerprint(self) -> str:
+        """Identity of the prompt + model; caches keyed on it go stale when criteria change."""
+        import hashlib
+
+        material = json.dumps(
+            {"model": self.model, "criteria": self.CRITERIA, "instructions": self.INSTRUCTIONS, "scope": self.SYSTEM_SCOPE},
+            sort_keys=True, ensure_ascii=False,
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
     def classify(self, query: str) -> QueryClassification:
         payload = {
             "model": self.model,
             "state": {
                 "query": query,
-                "system_scope": "The application answers questions only from the Vietnamese Labor Code 2019 corpus. It has no web lookup or human review enabled.",
+                "system_scope": self.SYSTEM_SCOPE,
             },
             "questions": {
                 self.QUESTION_ID: {
                     "type": "choice",
-                    "instructions": "Classify the user's query into exactly one guardrail category. Choose sensitive_or_disallowed only for harmful or evasive intent, not for ordinary legal compliance questions.",
+                    "instructions": self.INSTRUCTIONS,
                     "criteria": self.CRITERIA,
                 }
             },

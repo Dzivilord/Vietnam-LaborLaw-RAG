@@ -23,6 +23,30 @@ OUT_OF_SCOPE_PATTERNS = (
 )
 
 
+# Requests to reveal or override the system instructions (not a labor question).
+# Kept narrow: a labor question with an *embedded* "ignore the rules" must still
+# be answered, so generic "bỏ qua các quy tắc" is deliberately not matched.
+PROMPT_EXTRACTION_PATTERNS = (
+    r"system\s*prompt",
+    r"lời\s+nhắc\s+hệ\s+thống",
+    r"bỏ\s+qua\s+(?:mọi|tất\s+cả)\s+(?:hướng\s+dẫn|chỉ\s+dẫn)",
+    r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions",
+)
+
+# Bộ luật Lao động 2019 has 220 articles; asking for a higher one cannot be
+# answered from the corpus.
+MAX_ARTICLE_NUMBER = 220
+ARTICLE_REFERENCE = r"\bđiều\s+(\d{1,4})\b"
+
+
+def nonexistent_articles(text: str, max_article: int = MAX_ARTICLE_NUMBER) -> tuple[str, ...]:
+    """Article numbers in the query, if *all* of them exceed ``max_article``."""
+    numbers = [int(n) for n in re.findall(ARTICLE_REFERENCE, " ".join(text.casefold().split()))]
+    if numbers and all(n > max_article for n in numbers):
+        return tuple(f"article_{n}_not_in_corpus" for n in numbers)
+    return ()
+
+
 def matched_patterns(text: str, patterns: tuple[str, ...]) -> tuple[str, ...]:
     normalized = " ".join(text.casefold().split())
     return tuple(pattern for pattern in patterns if re.search(pattern, normalized))

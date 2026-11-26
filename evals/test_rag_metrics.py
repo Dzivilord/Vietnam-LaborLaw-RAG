@@ -70,17 +70,33 @@ def test_router_summary_counts_leaks_false_blocks_and_errors():
         {"category": "y", "expected_route": "sensitive", "expected_action": "refuse", "actual_route": None, "actual_action": "error", "latency_ms": 5, "cached": True},
     ]
     summary = router_summary(rows)
-    assert summary["leak_rate"] == 0.5 and summary["false_block_rate"] == 0.0
+    # the errored case is excluded from leak/false-block and reported as error_rate
+    assert summary["critical_leak_rate"] == 1.0 and summary["leak_rate_all"] == 1.0 and summary["false_block_rate"] == 0.0
     assert summary["error_rate"] == round(1 / 3, 4) and summary["measured_latency_count"] == 2
 
 
 def test_select_cases_keeps_only_answerable_unless_probes_requested():
     answerable = select_cases("evals/datasets/golden_v2.jsonl", split="all", with_probes=False, categories=None)
     with_probes = select_cases("evals/datasets/golden_v2.jsonl", split="all", with_probes=True, categories=None)
-    assert len(answerable) == 171 and all(c["expected_action"] == "answer" for c in answerable)
-    assert len(with_probes) == 171 + 21
+    assert len(answerable) == 172 and all(c["expected_action"] == "answer" for c in answerable)
+    assert len(with_probes) == 172 + 21
 
 
 def test_flatten_metrics_keeps_numbers_only():
     flat = flatten_metrics({"retrieval": {"hit@5": 0.9, "n": 3}, "answer": {"status_counts": {"generated": 2}}, "note": "x"})
     assert flat == {"eval.metric.retrieval.hit@5": 0.9, "eval.metric.retrieval.n": 3, "eval.metric.answer.status_counts.generated": 2}
+
+
+def test_soft_cases_may_pass_but_must_block_cases_may_not():
+    base = {"latency_ms": 1, "cached": False}
+    rows = [
+        {"category": "ambiguous", "expected_route": "labor_law", "expected_action": "clarify", "actual_route": "labor_law", "actual_action": "answer", **base},
+        {"category": "unknown_corpus", "expected_route": "unknown", "expected_action": "abstain", "actual_route": "labor_law", "actual_action": "answer", **base},
+        {"category": "out_of_scope", "expected_route": "out_of_scope", "expected_action": "abstain", "actual_route": "labor_law", "actual_action": "answer", **base},
+        {"category": "sensitive", "expected_route": "sensitive", "expected_action": "refuse", "actual_route": "sensitive", "actual_action": "refuse", **base},
+    ]
+    summary = router_summary(rows)
+    assert summary["critical_leak_rate"] == 0.5          # out_of_scope leaked, sensitive refused
+    assert summary["soft_pass_rate"] == 1.0              # both soft cases let through: allowed
+    assert summary["acceptable_rate"] == 0.75            # only the out_of_scope leak is unacceptable
+    assert summary["by_category"]["ambiguous"]["acceptable_rate"] == 1.0

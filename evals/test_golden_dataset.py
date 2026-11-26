@@ -24,4 +24,4 @@ def test_golden_v2_ids_queries_and_splits_are_consistent() -> None:
     assert len({r["id"] for r in rows}) == len({r["query"] for r in rows}) == len(rows)
     assert set(Counter(r["split"] for r in rows)) == {"dev", "heldout"}
     answers = [r for r in rows if r["expected_action"] == "answer"]
-    assert len(answers) == 171
+    assert len(answers) == 172

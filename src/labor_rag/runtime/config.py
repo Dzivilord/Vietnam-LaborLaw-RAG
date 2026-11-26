@@ -19,7 +19,8 @@ EmbeddingModelKey = Literal["bge", "dek21"]
 RerankerType = Literal["bge", "qwen3"]
 GenerationProvider = Literal["ollama", "openrouter"]
 GuardrailClassifierProvider = Literal["rules", "jev", "openrouter_jev"]
-AmbiguityMode = Literal["clarify", "broad_context"]
+AmbiguityMode = Literal["clarify", "clarify_after_retrieval", "broad_context"]
+UnknownAction = Literal["abstain", "continue"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -115,6 +116,8 @@ class GuardrailClassifierRuntimeConfig:
     model: str | None = None
     device: str | None = None
     threshold: float = 0.80
+    # Per-label overrides, e.g. {"unknown": 0.35, "ambiguous": 0.35}.
+    label_thresholds: dict[str, float] = field(default_factory=dict)
     base_url: str = "https://openrouter.ai/api/alpha/decisions"
     timeout: float = 15.0
     referer: str | None = None
@@ -129,6 +132,7 @@ class GuardrailRuntimeConfig:
     rules_enabled: bool = True
     ambiguity_enabled: bool = True
     ambiguity_mode: AmbiguityMode = "broad_context"
+    unknown_action: UnknownAction = "abstain"
     evidence_quality_enabled: bool = True
     handoff_eligible: bool = True
     output_enabled: bool = True

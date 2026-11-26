@@ -108,6 +108,18 @@ class LaborLawRAGPipeline:
                 base["answer"] = user_message_for(evidence_decision)
                 return RAGRunResult(status="insufficient_context", generation=None, **base)
 
+        if input_decision is not None and input_decision.metadata.get("clarify_after_retrieval"):
+            # The router judged the query ambiguous. Instead of answering from a
+            # broad context, return grounded options (articles that were found)
+            # plus the evidence itself so the UI can show it; the user refines
+            # the question or picks a topic. No LLM call.
+            suggestions = self._suggestions_from_context(upstream)
+            base["suggestions"] = suggestions
+            base["answer"] = self._clarification_message(suggestions)
+            base["diagnostics"]["clarification"] = {"source": "input_guardrail", "suggestion_count": len(suggestions)}
+            self._emit_guardrail(event_callback, "completed", "Ambiguous query: returning topic suggestions instead of an answer.")
+            return RAGRunResult(status="clarification_required", generation=None, **base)
+
         if not generate or self.generator is None:
             return RAGRunResult(status="ready", generation=None, **base)
 
@@ -185,6 +197,37 @@ class LaborLawRAGPipeline:
                 },
             },
         )
+
+    @staticmethod
+    def _suggestions_from_context(upstream, limit: int = 8) -> list:
+        """One suggestion per article among the selected evidence, in context order."""
+        from labor_rag.query_understanding.ambiguity_classifier import Suggestion
+
+        suggestions, seen = [], set()
+        for item in upstream.context_result.evidence:
+            article = item.article_number
+            key = article or item.chunk_id
+            if key in seen:
+                continue
+            seen.add(key)
+            title = (getattr(item, "article_title", None) or "").strip()
+            reference = f"Điều {article}" if article else item.chunk_id
+            suggestions.append(Suggestion(
+                label=f"{title} ({reference})" if title else reference,
+                chunk_id=item.chunk_id, reranker_score=float(item.score),
+                article_number=article, clause_number=item.clause_number,
+            ))
+            if len(suggestions) >= limit:
+                break
+        return suggestions
+
+    @staticmethod
+    def _clarification_message(suggestions: list) -> str:
+        if not suggestions:
+            return "Câu hỏi còn khá chung. Vui lòng nêu rõ tình huống cụ thể (loại hợp đồng, thời điểm, vấn đề cần hỏi)."
+        topics = "\n".join(f"- {s.label}" for s in suggestions)
+        return ("Câu hỏi còn khá chung và liên quan đến nhiều quy định. Bạn muốn hỏi về nội dung nào dưới đây, "
+                "hoặc mô tả cụ thể hơn tình huống của bạn?\n" + topics)
 
     @staticmethod
     def _status_for_guardrail(action: str, category: str) -> str:
