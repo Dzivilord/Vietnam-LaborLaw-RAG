@@ -1,8 +1,18 @@
+export interface ClarificationSuggestion {
+  label: string;
+  article_number?: string | null;
+  clause_number?: string | null;
+}
+
 export interface ChatResponse {
   request_id: string;
   answer: string | null;
+  /** Pipeline outcome: generated, insufficient_context, out_of_scope, refused, clarification_required, ... */
+  status?: string | null;
   citations: string[];
   evidence: EvidenceCitation[];
+  /** Grounded topic options returned when the question is too broad. */
+  suggestions?: ClarificationSuggestion[];
   debug: {
     status?: string;
     diagnostics?: Record<string, unknown>;

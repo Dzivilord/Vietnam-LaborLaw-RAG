@@ -1,99 +1,140 @@
-# Running phase-2 RAG evals on Kaggle (GPU)
+# Chạy pha 2 (RAG eval) trên Kaggle GPU
 
-Phase 1 (router) runs locally: it needs no GPU, only the classifier API.
-Phase 2 (retrieval → rerank → context → generation) runs here on a Kaggle GPU.
-RAGAS scoring can run on Kaggle or locally on the downloaded run file.
+Pha 1 (router) chạy ở máy local. Pha 2 (retrieval → rerank → context → generation)
+chạy trên Kaggle. Sweep ngưỡng và RAGAS chạy được ở bất kỳ đâu trên file kết quả.
 
-Notebook settings: **Accelerator = GPU (T4 x2 or P100)**, **Internet = on**.
-Secrets (Add-ons → Secrets): `GITHUB_TOKEN` (private repo only),
-`LOGFIRE_TOKEN` (write token of the Logfire project), `OPENROUTER_API_KEY`
-(only for RAGAS or OpenRouter generation).
+## 0. Chuẩn bị (một lần)
 
-> The notebook clones the GitHub repo, so commit and push the current code
-> first. Alternatively upload the repo as a Kaggle Dataset and copy it to
-> `/kaggle/working/RAG`.
+1. Commit và push code lên GitHub (notebook clone từ đó). Kiểm tra trên GitHub có
+   `evals/`, `evals/datasets/golden_v2.jsonl`, `configs/labor_rag_qwen3.yaml`,
+   `data/processed/chunks/labor_law_legal.jsonl`.
+2. Tài khoản Kaggle đã xác minh số điện thoại (bắt buộc để bật GPU và Internet).
+3. Tạo notebook mới → panel bên phải:
+   - **Accelerator**: GPU T4 x2 (hoặc P100)
+   - **Internet**: On
+   - **Add-ons → Secrets** (tuỳ chọn):
+     - `GITHUB_TOKEN`: chỉ cần nếu repo private (token quyền `repo` read)
+     - `LOGFIRE_TOKEN`: write token của project Logfire, để xem trace
+     - `OPENROUTER_API_KEY`: chỉ cần cho RAGAS (key thường, không phải management key)
 
-## 1. Code and dependencies
+   Bật từng secret cho notebook (tick "Attached").
+
+Pha 2 không gọi router nên **không cần** `OPENROUTER_API_KEY`.
+
+## 1. Lấy code và cài thư viện
 
 ```python
 import os, subprocess
 from kaggle_secrets import UserSecretsClient
+
 secrets = UserSecretsClient()
 for name in ("LOGFIRE_TOKEN", "OPENROUTER_API_KEY", "GITHUB_TOKEN"):
     try:
         os.environ[name] = secrets.get_secret(name)
     except Exception:
-        pass
+        pass  # secret not attached: fine
 
+repo = "github.com/Dzivilord/Vietnam-LaborLaw-RAG.git"
 token = os.environ.get("GITHUB_TOKEN")
-url = f"https://{token}@github.com/Dzivilord/Vietnam-LaborLaw-RAG.git" if token else "https://github.com/Dzivilord/Vietnam-LaborLaw-RAG.git"
+url = f"https://{token}@{repo}" if token else f"https://{repo}"
 subprocess.run(["git", "clone", "--depth", "1", url, "/kaggle/working/RAG"], check=True)
-os.chdir("/kaggle/working/RAG")          # every command below runs from the repo root
+os.chdir("/kaggle/working/RAG")   # mọi lệnh sau chạy từ repo root
 ```
 
 ```bash
 !pip install -q -r requirements.txt && pip install -q -e .
-!pip install -q -r requirements-eval.txt   # only if RAGAS runs here
 ```
 
-## 2. Generation model (Ollama on the GPU)
+Cảnh báo xung đột phiên bản của pip thường vô hại. Nếu `import torch` lỗi sau
+khi cài, chọn **Run → Restart & clear outputs**, rồi chạy lại cell 1 (bỏ qua clone
+nếu thư mục đã có).
+
+## 2. Model sinh câu trả lời (Ollama trên GPU)
+
+Bỏ qua phần này nếu chạy `--no-generate`.
 
 ```bash
+!apt-get -qq install -y zstd > /dev/null
 !curl -fsSL https://ollama.com/install.sh | sh
-!nohup ollama serve > /kaggle/working/ollama.log 2>&1 &
-!sleep 5 && ollama pull qwen3.5:4b
 ```
 
-Skip this section for `--no-generate` runs, or switch `generation.provider`
-to `openrouter` in a config copy.
+```python
+import subprocess, time
+subprocess.Popen(["ollama", "serve"], stdout=open("/kaggle/working/ollama.log", "w"), stderr=subprocess.STDOUT)
+time.sleep(5)
+```
 
-## 3. Index the corpus into embedded Qdrant (no server, ~1 minute)
+```bash
+!ollama pull qwen3.5:4b
+!ollama run qwen3.5:4b "xin chào" --verbose 2>&1 | tail -3   # kiểm tra chạy trên GPU
+```
+
+## 3. Index corpus vào Qdrant nhúng (không cần server, khoảng 1 phút)
 
 ```bash
 !python scripts/index_labor_law_chunks.py --data data/processed/chunks/labor_law_legal.jsonl \
     --model dek21 --collection labor_law_dek21_768 --qdrant-path /kaggle/working/qdrant --device cuda
 ```
 
-## 4. Phase 2 runs
+## 4. Chạy pha 2
+
+Smoke test 3 câu trước:
 
 ```bash
-# Logfire: traces go to the project of LOGFIRE_TOKEN, environment="kaggle"
+!python -m evals.run_rag --split dev --limit 3 --qdrant-path /kaggle/working/qdrant --device cuda
+```
+
+Chạy thật trên dev, BGE và Qwen3:
+
+```bash
 !python -m evals.run_rag --split dev --with-abstain-probes \
-    --qdrant-path /kaggle/working/qdrant --device cuda --label bge-default
-
+    --qdrant-path /kaggle/working/qdrant --device cuda --label bge
 !python -m evals.run_rag --split dev --with-abstain-probes --config configs/labor_rag_qwen3.yaml \
-    --qdrant-path /kaggle/working/qdrant --device cuda --label qwen3-default
+    --qdrant-path /kaggle/working/qdrant --device cuda --label qwen3
 ```
 
-Calibrate thresholds on each dev run (no model needed, seconds):
+Mỗi lần chạy in ra `Per-case: evals/runs/rag-<id>.jsonl`. Ghi lại hai id này.
+
+## 5. Hiệu chỉnh ngưỡng (vài giây, không cần model)
 
 ```bash
-!python -m evals.sweep_context --run evals/runs/<rag-run-id>.jsonl
+!python -m evals.sweep_context --run evals/runs/rag-<id-bge>.jsonl
+!python -m evals.sweep_context --run evals/runs/rag-<id-qwen3>.jsonl
 ```
 
-Put the chosen `min_score` / `relative_to_top` in the config, then report
-once on heldout:
+Chọn cặp `min_score` / `relative_to_top` có `ctx_hit` cao, `f_abst` thấp, ít chunk.
+Sửa vào config (trên Kaggle hoặc sửa local rồi push), sau đó chạy heldout một lần:
 
 ```bash
-!python -m evals.run_rag --split heldout --with-abstain-probes --qdrant-path /kaggle/working/qdrant --device cuda --label bge-calibrated
+!python -m evals.run_rag --split heldout --with-abstain-probes \
+    --qdrant-path /kaggle/working/qdrant --device cuda --label bge-final
 ```
 
-## 5. RAGAS (optional, costs judge tokens)
+## 6. RAGAS (tuỳ chọn, tốn token judge)
 
 ```bash
-!RAGAS_JUDGE_MODEL=openai/gpt-4.1-mini python -m evals.run_ragas --run evals/runs/<rag-run-id>.jsonl --limit 30
+!pip install -q ragas==0.4.4
+!RAGAS_JUDGE_MODEL=openai/gpt-4.1-mini python -m evals.run_ragas --run evals/runs/rag-<id>.jsonl --limit 30
 ```
 
-## 6. Keep the results
+## 7. Lưu kết quả
 
-Kaggle wipes the session. Download `evals/runs/` and `evals/reports/`
-(they are git-ignored), e.g.:
+Kaggle xoá session khi tắt. Nén rồi tải từ panel **Output**:
 
 ```bash
-!cd /kaggle/working/RAG && zip -qr /kaggle/working/eval_results.zip evals/runs evals/reports
+!zip -qr /kaggle/working/eval_results.zip evals/runs evals/reports
 ```
 
-Notes
-* The first run downloads DEk21, BGE/Qwen3 reranker weights from Hugging Face.
-* `Qwen/Qwen3-Reranker-4B` fits a T4 in fp16 if 0.6B is not robust enough.
-* Embedded Qdrant is single-process: don't index and evaluate in two notebooks at once against the same folder.
+Giải nén vào repo local (`evals/runs`, `evals/reports`) để chạy lại sweep/RAGAS ở máy.
+
+## Mẹo
+
+* Chạy dài: dùng **Save Version → Save & Run All (Commit)**. Notebook chạy nền,
+  tối đa 12 giờ, file trong `/kaggle/working` thành Output. Khi đó thay các
+  `<id>` bằng cách đọc id tự động, ví dụ `sorted(glob("evals/runs/rag-*.jsonl"))[-1]`.
+* Quota GPU: khoảng 30 giờ/tuần. Tắt session khi xong (**Stop session**).
+* Lần đầu tải DEk21, BGE/Qwen3 reranker và qwen3.5:4b, mất vài phút.
+* `Qwen/Qwen3-Reranker-4B` chạy được trên T4 (fp16) nếu bản 0.6B chưa đủ tốt:
+  sửa `reranker.model` trong `configs/labor_rag_qwen3.yaml`.
+* Qdrant nhúng chỉ cho một process: đừng index và eval song song trên cùng thư mục.
+* Nếu Ollama báo lỗi kết nối: xem `/kaggle/working/ollama.log`, chạy lại cell `ollama serve`.

@@ -2,7 +2,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from fastapi import APIRouter, Request
-from app.backend.api.schemas import ChatRequest, ChatResponse, EvidenceCitation
+from app.backend.api.schemas import ChatRequest, ChatResponse, ClarificationSuggestion, EvidenceCitation
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -37,7 +37,9 @@ def chat(body: ChatRequest, request: Request):
     return ChatResponse(
         request_id=request_id,
         answer=result.answer,
+        status=result.metadata.get("status"),
         citations=result.metadata.get("citations", []),
+        suggestions=[ClarificationSuggestion(**item) for item in result.metadata.get("suggestions", [])],
         evidence=[
             EvidenceCitation(
                 evidence_id=item.evidence_id,

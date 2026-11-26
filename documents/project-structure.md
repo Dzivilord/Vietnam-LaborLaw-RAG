@@ -1,105 +1,106 @@
-# Cấu trúc project Labor Law RAG
+# Cấu trúc project
 
-Tài liệu này mô tả cấu trúc hiện tại của project và vai trò của từng khu vực. Project là hệ thống hỏi đáp pháp luật lao động Việt Nam, gồm backend FastAPI, frontend Next.js và thư viện Python cho pipeline RAG.
+Bản đồ toàn bộ repo và vai trò từng phần. Mỗi thư mục quan trọng có README riêng
+(liên kết bên dưới); tài liệu này cho cái nhìn tổng thể và các quy ước.
 
 ```text
 RAG/
 ├── app/
-│   ├── backend/
-│   │   ├── api/
-│   │   │   ├── main.py                 # Khởi tạo FastAPI, lifespan và CORS
-│   │   │   ├── schemas.py              # Pydantic request/response schemas
-│   │   │   └── routes/
-│   │   │       └── chat.py             # POST /chat: gọi RAG runtime và trả evidence
-│   │   └── requirements.txt            # Dependencies dành cho backend
-│   └── frontend/
-│       ├── src/
-│       │   ├── app/                    # Next.js App Router, page và CSS tổng thể
-│       │   ├── components/             # ChatPanel, ExplainPanel, DocumentViewer...
-│       │   ├── services/api.ts          # Client gọi FastAPI
-│       │   └── types/rag.ts             # TypeScript types cho RAG response
-│       ├── package.json                 # Scripts và dependencies frontend
-│       └── next.config.js               # Cấu hình Next.js
+│   ├── backend/                         → app/backend/README.md
+│   │   └── api/
+│   │       ├── main.py                  # FastAPI app, lifespan (nạp model), CORS, /health
+│   │       ├── schemas.py               # ChatRequest / ChatResponse / EvidenceCitation
+│   │       └── routes/
+│   │           ├── chat.py              # POST /chat — giao diện chính
+│   │           └── admin.py             # /admin/traces, /admin/runs (+ SSE)
+│   └── frontend/                        → app/frontend/README.md
+│       └── src/
+│           ├── app/                     # page.tsx (hỏi đáp), admin/ (quan sát), CSS
+│           ├── components/              # Welcome, ChatTurn, AnswerMarkdown, EvidencePanel, Composer
+│           ├── lib/status.ts            # trạng thái pipeline → thông báo hiển thị
+│           └── services/api.ts          # client gọi backend
 │
-├── src/labor_rag/                      # Python package: lõi nghiệp vụ RAG
-│   ├── embeddings/                      # Dense/sparse embedding implementations
-│   ├── generation/                      # Prompt, generator và LLM providers
-│   │   └── providers/                   # Ollama, Gemini
-│   ├── indexing/                        # Đưa chunks và vectors vào vector database
-│   ├── ingestion/                       # Load PDF/HTML/web và làm sạch văn bản đầu vào
-│   ├── models/                          # Domain models: document, RAG result
-│   ├── observability/                   # Nơi dành cho logging, metrics, tracing
-│   ├── pipelines/                       # Ghép retrieval, rerank, context, generation
-│   ├── processing/                      # Parser và chunker theo cấu trúc văn bản pháp luật
-│   ├── query_understanding/             # Phân loại câu hỏi mơ hồ và gợi ý làm rõ
-│   ├── reranking/                       # Reranker và context builder sau rerank
-│   ├── retrieval/                       # Dense, BM25, hybrid retrieval và query processing
-│   ├── runtime/                         # Config, factory, lifecycle model, health, API boundary
-│   └── storage/                         # Adapter Qdrant
+├── src/labor_rag/                       → src/labor_rag/README.md
+│   ├── runtime/                         # config YAML, factory, ModelManager, RAGRuntime (điểm vào)
+│   ├── pipelines/                       # rag_pipeline (truy xuất→context), application_pipeline (+guardrail, sinh)
+│   ├── guardrails/                      # rules, classifier (rules/JEV/OpenRouter), chính sách
+│   ├── retrieval/                       # dense, BM25, hybrid RRF, query understanding
+│   ├── reranking/                       # BGE, Qwen3, context builder
+│   ├── embeddings/                      # DEk21 (mặc định), BGE-M3, sparse
+│   ├── generation/                      # prompt, generator, provider Ollama/OpenRouter/Gemini
+│   ├── query_understanding/             # phân loại câu mơ hồ sau truy xuất
+│   ├── storage/                         # Qdrant (server hoặc nhúng)
+│   ├── indexing/, ingestion/, processing/   # đưa dữ liệu vào: đọc, làm sạch, parse, chunk, index
+│   ├── models/                          # EvidenceItem, RAGRunResult
+│   └── observability/                   # span Logfire, trace request
 │
-├── data/
-│   ├── raw/                             # PDF/text pháp luật gốc
-│   ├── extracted/                       # Văn bản sau trích xuất và metadata trung gian
-│   └── processed/
-│       └── chunks/                      # Corpus chunks JSONL dùng cho retrieval/indexing
+├── configs/                             → configs/README.md
+│   ├── labor_rag.yaml                   # cấu hình chính
+│   ├── labor_rag_qwen3.yaml             # biến thể reranker Qwen3
+│   └── retrieval_queries.json           # câu mẫu cho script truy xuất
 │
-├── configs/
-│   ├── labor_rag.yaml                   # Model, retrieval type, Qdrant collection và corpus
-│   └── retrieval_queries.json           # Câu query phục vụ kiểm tra/thử nghiệm retrieval
+├── data/                                → data/README.md
+│   ├── raw/                             # PDF Bộ luật Lao động 2019
+│   ├── extracted/                       # text, cây cấu trúc, dẫn chiếu
+│   └── processed/chunks/labor_law_legal.jsonl   # corpus 278 chunk (bắt buộc)
 │
-├── scripts/                             # CLI cho ingest, parse, clean, chunk, index và dev setup
-│   ├── run_rag_pipeline.py
-│   ├── index_labor_law_chunks.py
-│   ├── chunk_labor_law.py
-│   ├── parse_labor_law.py
-│   ├── setup.ps1
-│   └── dev.ps1
+├── evals/                               → evals/README.md
+│   ├── datasets/golden_v2.jsonl         # 250 câu gán nhãn (dev/heldout)
+│   ├── run_router_v2.py                 # pha 1: router
+│   ├── run_rag.py, rag_metrics.py       # pha 2: RAG
+│   ├── sweep_context.py                 # hiệu chỉnh ngưỡng
+│   ├── run_ragas.py                     # pha 3: RAGAS
+│   └── tracing.py                       # Logfire cho eval
 │
-├── tests/                               # Unit/contract tests cho pipeline và API contract
-├── evals/                               # Dành cho benchmark, golden set và đánh giá chất lượng RAG
-├── infra/                               # Dành cho IaC, manifests deploy, CI/CD production
-├── monitoring/                          # Dành cho dashboards, alerts và cấu hình observability
-├── notebooks/                           # EDA và thử nghiệm retrieval/embedding
-├── documents/                           # Tài liệu kỹ thuật, vận hành và sản phẩm
-│   └── project-structure.md             # Tài liệu này
+├── scripts/                             → scripts/README.md   (setup, dev, tiền xử lý, index, chạy thử)
+├── tests/                               → tests/README.md     (unit test với stub)
+├── documents/
+│   ├── project-structure.md             # tài liệu này
+│   └── kaggle_eval.md                   # chạy pha 2 trên Kaggle GPU
 │
-├── docker-compose.yml                   # Local Qdrant service
-├── pyproject.toml                       # Package metadata và Python dependencies chính
-├── requirements.txt                     # Dependencies Python runtime/indexing
-├── README.md                            # Hướng dẫn cài đặt, chạy và troubleshoot
-└── .env                                 # Cấu hình local/secrets, không được commit
+├── docker-compose.yml                   # Qdrant v1.19.0, lưu ở ./data/qdrant
+├── pyproject.toml                       # gói labor-law-rag (src/)
+├── requirements.txt                     # dependency Python chạy hệ thống
+├── requirements-eval.txt                # + ragas cho pha 3
+├── .env.example                         # mẫu biến môi trường (không chứa bí mật)
+├── CLAUDE.md                            # hướng dẫn cho trợ lý lập trình AI
+└── README.md                            # tổng quan, cài đặt, kết quả
 ```
 
-## Luồng chạy chính
+Thư mục `infra/`, `monitoring/`, `notebooks/` hiện **trống** (dành cho triển khai,
+giám sát, thử nghiệm sau này). `01_data_overview.ipynb` là notebook khám phá dữ
+liệu. `reference.txt` là tài liệu tham khảo cá nhân, không thuộc hệ thống.
+
+## Luồng một câu hỏi
 
 ```text
-Browser
-  -> Next.js frontend (app/frontend)
-  -> FastAPI POST /chat (app/backend/api/routes/chat.py)
-  -> RAGRuntime (src/labor_rag/runtime)
-  -> LaborLawRAGPipeline (src/labor_rag/pipelines)
-  -> Hybrid retrieval: Qdrant dense vectors + BM25
-  -> Reranker + context builder
-  -> LLM provider (mặc định Ollama)
-  -> Answer + evidence citations
-  -> Frontend hiển thị câu trả lời và nguồn trích dẫn
+Trình duyệt ─► Next.js (app/frontend) ─► POST /chat (app/backend)
+  ─► RAGRuntime.chat ─► LaborLawRAGPipeline
+       guardrail đầu vào ─► truy xuất lai (Qdrant + BM25) ─► rerank
+       ─► chọn ngữ cảnh ─► guardrail bằng chứng ─► LLM (Ollama) ─► guardrail đầu ra
+  ◄─ { status, answer có [E1]…, evidence (nguyên văn Điều/Khoản), suggestions }
+Giao diện: hiển thị câu trả lời, nhãn trích dẫn bấm được, khung căn cứ pháp lý.
 ```
 
-## Luồng dữ liệu/indexing
+## Luồng dữ liệu
 
 ```text
-Văn bản gốc (data/raw)
-  -> extract/parse/clean scripts
-  -> legal structure chunker
-  -> data/processed/chunks/*.jsonl
-  -> embedding model
-  -> Qdrant collection
-  -> runtime retrieval
+data/raw/labor_law.pdf
+  ─► load_pdf ─► clean_text ─► parse_labor_law (cây Chương/Điều/Khoản)
+  ─► chunk_labor_law (Điều; Điều dài tách theo Khoản)
+  ─► data/processed/chunks/labor_law_legal.jsonl
+  ─► index_labor_law_chunks (DEk21 → Qdrant)   +   BM25 dựng lúc backend khởi động
 ```
 
-## Quy ước phát triển
+## Quy ước
 
-- Business logic mới thuộc `src/labor_rag/`; API route chỉ nên làm nhiệm vụ validate request, gọi runtime và map response.
-- Không commit `.env`, Qdrant storage (`data/qdrant/`), model cache, `node_modules/` hoặc build artifacts.
-- Thay đổi corpus phải đi kèm metadata nguồn, version/effective date và quy trình re-index có thể tái lập.
-- `evals/`, `infra/` và `monitoring/` là các điểm mở rộng ưu tiên để đưa project từ local MVP lên môi trường production.
+- Logic nghiệp vụ nằm trong `src/labor_rag/`; route API chỉ kiểm tra request, gọi
+  runtime và trả kết quả.
+- Thành phần mới thêm qua `runtime/factory.py`, chọn bằng một `Literal` trong
+  `runtime/config.py`, bật trong YAML.
+- Chạy Python từ thư mục gốc repo.
+- Không commit `.env`, `data/qdrant/`, `evals/{runs,reports,cache}/`,
+  `node_modules/`, `.next/`, cache model.
+- Không chia chunk lại corpus: nhãn của bộ eval tham chiếu `chunk_id` hiện tại.
+- Thay đổi hành vi (router, ngưỡng, prompt, model) phải đo lại bằng `evals/`
+  trên `dev`, báo cáo trên `heldout`.

@@ -60,6 +60,11 @@ class RAGRuntime:
                         evidence.evidence_id for evidence in result.evidence
                     ],
                     "diagnostics": result.diagnostics,
+                    # Grounded topic options when the query needs clarification.
+                    "suggestions": [
+                        {"label": s.label, "article_number": s.article_number, "clause_number": s.clause_number}
+                        for s in (result.suggestions or [])
+                    ],
                     "total_latency_ms": round((perf_counter() - started) * 1000.0, 2),
                 },
                 evidence=list(result.evidence),

@@ -58,7 +58,7 @@ python -m evals.run_ragas --run evals/runs/rag-<id>.jsonl       # RAGAS judge (r
 
 The context builder actually used is `labor_rag/reranking/context_builder.py`; `retrieval/context_builder.py` is a separate older module.
 
-**Routes.** `POST /chat` (chat.py) for the main UI. `admin.py` exposes `GET /admin/traces` (in-memory ring buffer of the last 200 traces, `RequestTraceRecorder`), `POST /admin/runs` + `GET /admin/runs/{id}/events` (SSE stream of pipeline stage events for the `/admin` console; per-request overrides of rerank/model/temperature/tokens are never persisted). Frontend API calls live in [app/frontend/src/services/api.ts](app/frontend/src/services/api.ts); shared types in `src/types/rag.ts`.
+**Routes.** `POST /chat` (chat.py) for the main UI. `admin.py` exposes `GET /admin/traces` (in-memory ring buffer of the last 200 traces, `RequestTraceRecorder`), `POST /admin/runs` + `GET /admin/runs/{id}/events` (SSE stream of pipeline stage events for the `/admin` console; per-request overrides of rerank/model/temperature/tokens are never persisted). Frontend API calls and response types live in [app/frontend/src/services/api.ts](app/frontend/src/services/api.ts); `src/lib/status.ts` maps pipeline `status` values to UI messages. The main page (`src/app/page.tsx`) and `/admin` have separate stylesheets (`globals.css`, `admin/admin.css`).
 
 **Observability.** Logfire is opt-in (`LOGFIRE_ENABLED=true`); spans via `observability/logfire_spans.py`. Firestore trace mirroring is enabled only when `FIRESTORE_TRACE_COLLECTION` is set; with `RAG_TRACE_INCLUDE_CONTENT=false` (default) only a query hash leaves the machine.
 

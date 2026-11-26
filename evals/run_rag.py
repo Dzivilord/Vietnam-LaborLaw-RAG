@@ -56,7 +56,12 @@ def apply_overrides(config, args):
         reranker = dataclasses.replace(reranker, device=args.device)
     if args.ollama_url:
         generation = dataclasses.replace(generation, ollama_url=args.ollama_url)
-    return dataclasses.replace(config, retrieval=retrieval, reranker=reranker, generation=generation)
+    guardrails = config.guardrails
+    if not args.keep_input_guardrail:
+        # The input classifier is never called in phase 2; use the offline one so
+        # no API key is needed (e.g. on Kaggle). Evidence/output gates are unchanged.
+        guardrails = dataclasses.replace(guardrails, classifier=dataclasses.replace(guardrails.classifier, provider="rules"))
+    return dataclasses.replace(config, retrieval=retrieval, reranker=reranker, generation=generation, guardrails=guardrails)
 
 
 def _legal_reference(evidence: Any) -> dict[str, Any]:

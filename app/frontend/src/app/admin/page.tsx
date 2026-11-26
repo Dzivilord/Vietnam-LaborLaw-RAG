@@ -1,5 +1,7 @@
 "use client";
 
+import "./admin.css";
+
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getRecentTraces, liveEventsUrl, startLiveRun, type ChatOptions, type ChatResponse, type LiveTraceEvent, type RequestTrace } from "@/services/api";
 

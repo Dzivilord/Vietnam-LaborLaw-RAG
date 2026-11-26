@@ -36,9 +36,17 @@ class EvidenceCitation(BaseModel):
     point_number: str | None = None
 
 
+class ClarificationSuggestion(BaseModel):
+    label: str
+    article_number: str | None = None
+    clause_number: str | None = None
+
+
 class ChatResponse(BaseModel):
     request_id: str
     answer: str | None = None
+    status: str | None = None
     citations: list[str] = Field(default_factory=list)
     evidence: list[EvidenceCitation] = Field(default_factory=list)
+    suggestions: list[ClarificationSuggestion] = Field(default_factory=list)
     debug: dict = Field(default_factory=dict)
